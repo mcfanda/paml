@@ -42,7 +42,15 @@ levelcenter<-function(var,cluster,level="within") {
 }
 
 
+#' @export
 
+levelscale<-function(var,cluster,y,level="within") {
+
+  cvar<-levelcenter(var,cluster,level)
+  cy<-levelcenter(y,cluster,level)
+  cvar*sd(cy)/sd(cvar)
+
+}
 .rdraw<-function(sigma,varcorr) {
 
   ncol<-ncol(varcorr)

@@ -28,21 +28,7 @@ betas.lm<-function(model) {
 #' @export
 betas.lmerMod <- function(model, method="coef" ,verbose=FALSE) {
 
-  if (method == "coef")
-    return(.betas_coefs(model,verbose))
-  if (method == "var")
-    return(.betas_vars(model,verbose))
-  if (method == "zscore")
-    return(.betas_zscores(model,verbose))
-
-  stop("No valid method found for producing beta coefficients")
-
-}
-
-.betas_coefs <- function(model,verbose) {
-
   data <- model@frame
-
   dep <- formula(model)[[2]]
   effects <- fixef(model)
   terms<- terms(model)
@@ -60,7 +46,6 @@ betas.lmerMod <- function(model, method="coef" ,verbose=FALSE) {
           cluster<-clusters[cluster_i]
           nested_test<-FALSE
           if (cluster_i>1) {nested_test<-lme4::isNested(data[[clusters[cluster_i-1]]],data[[cluster]])}
-
           if (length(grep(":", cluster))>0 & !(cluster %in% names(data)) ) {
             cls <- stringr::str_split(cluster, ":")[[1]]
             data[[cluster]]<-0
@@ -74,6 +59,7 @@ betas.lmerMod <- function(model, method="coef" ,verbose=FALSE) {
           .data<-data
 
             if (nested_test && type!="factor") {
+                 if (verbose) message("variable ", pred," aggregated over ",clusters[cluster_i-1]," nested within ",clusters[cluster_i])
                 .data[[pred]]<-levelcenter(data[[pred]],data[[clusters[cluster_i-1]]],level = "between")
             }
             numerator <- .numerator(.data[[pred]],.data[[cluster]])
@@ -87,10 +73,13 @@ betas.lmerMod <- function(model, method="coef" ,verbose=FALSE) {
                         .data[[dep]]<-levelcenter(data[[dep]],data[[clusters[cluster_i-1]]],level = "between")
                       }
 
-                  denominator <- sd(levelcenter(data[[dep]],data[[clusters[cluster_i]]],level = "within"))
+                    found = TRUE
 
-                  found = TRUE
-                  effects[pred] <- effects[pred] * numerator / denominator
+                    y<-levelcenter(.data[[dep]],data[[clusters[cluster_i]]],level = "within")
+                    if (method=="coef") {
+                          denominator <- sd(y)
+                          effects[pred] <- effects[pred] * numerator / denominator
+                    }
 
                   if (verbose) message("Term ",paste(pred,callapse=", ")," scaled within cluster ", cluster)
                   if (verbose) message("with sd(y)=",paste(denominator,collapse = ", ")," and sd(x)=",paste(numerator,collapse =", " ))
@@ -115,66 +104,6 @@ betas.lmerMod <- function(model, method="coef" ,verbose=FALSE) {
   }
 
 
-.betas_vars <- function(model,verbose) {
-
-  data <- model@frame
-  dep <- formula(model)[[2]]
-  effects <- fixef(model)
-  preds <- names(effects)
-
-  if ("(Intercept)" %in% preds)
-    preds <- preds[-1]
-
-  clusters <- names(lme4::getME(model, "cnms"))
-  levels <- stringr::str_count(clusters, pattern = ":")
-  clusters <- clusters[order(-levels)]
-  for (pred in preds) {
-    found = FALSE
-    for (cluster_i in 1:length(clusters)) {
-
-      cluster<-clusters[cluster_i]
-      nested_test<-FALSE
-      if (cluster_i>1) {nested_test<-lme4::isNested(data[[clusters[cluster_i-1]]],data[[cluster]])}
-
-      if (length(grep(":", cluster))>0 & !(cluster %in% names(data)) ) {
-        cls <- stringr::str_split(cluster, ":")[[1]]
-        data[[cluster]]<-0
-        n<-dim(data)[1]
-        e<-floor(log10(n))
-        e<-10^e
-        k<-length(cls)
-        for (i in 1:k)
-          data[cluster]<-data[cluster]+e^(k-i+1)*as.numeric(data[[cls[i]]])
-      }
-
-      .data<-data
-
-      if (nested_test) {
-        .data[[pred]]<-levelcenter(data[[pred]],data[[clusters[cluster_i-1]]],level = "between")
-      }
-
-      test <- mean(tapply(.data[[pred]], .data[[cluster]], sd, na.rm = T),na.rm=T)
-      if (test > .0001 ) {
-        if (!found) {
-          if (nested_test) {
-            .data[[dep]]<-levelcenter(.data[[dep]],data[[clusters[cluster_i-1]]],level = "between")
-          }
-          found=TRUE
-          if (verbose) message("Scaling ",pred," in cluster ", cluster)
-          data<-levelscale(.data,y = dep,var = pred,cluster = cluster,level = "within",overwrite = TRUE)
-          if (verbose) message("Term ",pred," scaled within cluster ", cluster)
-
-      }
-      }
-    }
-    if (!found) {
-      if (verbose) message("Term ",pred," scaled between cluster ", cluster)
-       data[[pred]]<-levelscale(data[[pred]],data[[cluster]],level = "between")
-    }
-  }
-  mod<-suppressWarnings(update(model,data=data))
-  fixef(mod)
-}
 
 
 ######### helper functions
@@ -188,14 +117,11 @@ betas.lmerMod <- function(model, method="coef" ,verbose=FALSE) {
           if (test2>.95)
                 return(FALSE)
           ## if it varies, compute the numerator from the contrasts codes
-          n<-mean(tapply(var, cluster, length))
           a<-contrasts(var)
-          k<-nlevels(var)
-          mm<-apply(a,2,mean)
-          b<-a-mm
-          s<-apply(b,2,function(x) sum(x^2))
-          val<-sqrt(s*(n/k)*(1/(n-1)))
-    } else {
+          k<-nrow(a)
+          N<-length(var)
+          val<-sqrt(apply(a-mean(a),2,function(x) sum(x^2))*N/(k*(N-1)))
+          } else {
           val<-sd(levelcenter(var,cluster))
           if (val<.00001) val<-FALSE
     }

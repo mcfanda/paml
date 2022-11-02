@@ -18,13 +18,89 @@
 #' @author Marcello Gallucci
 #' @export
 
-get_sample<-function(model) {
+get_sample<-function(info) {
 
-  data<-model@frame
-  dep<-formula(model)[[2]]
-  data[[dep]]<-as.numeric(simulate(model)[,1])
-  data
-}
+   ## gather info for clusters
+
+    clusters<-info$clusters
+    nclusters<-lapply(clusters, function(x) 1:x$n)
+    clusternames<-unlist(rlist::list.select(clusters,name))
+
+    if (info$structure=="nested") {
+      clustervalues<-as.data.frame(.nestedclusters(nclusters))
+      names(clustervalues)<-clusternames
+    } else {
+      clustervalues<-expand.grid(nclusters)
+    }
+
+    colnames(clustervalues)<-clusternames
+    clustervalues$id<-1:dim(clustervalues)[1]
+    clusterdata<-clustervalues
+
+    ## gather info for variables
+    vars<-info$vars
+    dep<-rlist::list.find(vars, varying=="dependent",n=1)[[1]]
+    covs<-rlist::list.find(vars, type=="numeric",n=Inf)
+    factors<-rlist::list.find(vars, type=="factor",n=Inf)
+
+    ## create cluster-level data
+    for (cluster in clusters) {
+
+      values<-clustervalues[[cluster$name]]
+      n<-length(unique(values))
+      ysd<-1
+      if (is.something(cluster$ysd)) ysd<-cluster$ysd
+      onedata<-.make_clusterdata(cluster$name,info,n,ysd)
+      if (dim(onedata)[1]==0) {
+                 onedata<-data.frame(unique(values))
+                 names(onedata)<-cluster$name
+      } else {
+                 onedata[[cluster$name]]<-unique(values)
+      }
+      clusterdata<-merge(clusterdata,onedata,by=cluster$name,all.x=T)
+    }
+
+    info$clusters<-list(list(name="within",n=dep$n,ysd=dep$ysd))
+    wdata<-list()
+    nk<-length(unique(clustervalues$id))
+    n<-dep$n
+    if (length(n)==1) n<-rep(n,nk)
+    ucluster<-unique(clustervalues$id)
+    ysd<-1
+    if (is.something(dep$ysd)) ysd<-dep$ysd
+    if (length(ysd)==1) ysd<-rep(ysd,nk)
+    for (i in seq_along(ucluster)) {
+      onedata<-.make_clusterdata("within",info,n[i],ysd[i])
+      onedata[["id"]]<-ucluster[i]
+      wdata[[i]]<-onedata
+    }
+    wdata<-do.call(rbind,wdata)
+
+    # for (n<4) the within-cluster dependent variable cannot be computed, so we
+    # compute it now. Its betas will be only approximately close
+    # to the average within cluster standardized effect
+    if (!("within_dep_" %in% names(wdata))) {
+      ysd<-unlist(lapply(seq_len(nk),function(i) rep(ysd[i],n[i])))
+      .names<-names(wdata)[names(wdata) %in% names(info$fixed) ]
+      .wdata<-subset(wdata,select=.names)
+       wdata[["within_dep_"]]<-.yield_y(.wdata,info$fixed[.names])
+       wdata[["within_dep_"]]<-wdata[["within_dep_"]]*ysd
+    }
+    ### finalize the data
+    finaldata<-merge(clusterdata,wdata,by="id")
+    depnames<-paste0(c("within",clusternames),"_dep_")
+    depnames<-depnames[depnames %in% names(finaldata)]
+    finaldata[[dep$name]]<-apply(finaldata[,depnames],1,sum)
+    if (hasName(info$fixed,"(Intercept)"))
+             finaldata[[dep$name]]<-finaldata[[dep$name]]+info$fixed["(Intercept)"]
+#    finaldata[,depnames]<-NULL
+    for (cluster in clusternames) finaldata[[cluster]]<-factor(finaldata[[cluster]])
+    for (factor in factors)
+           if (factor$name %in% names(finaldata))
+                finaldata[[factor$name]]<-factor(finaldata[[factor$name]])
+    finaldata
+  }
+
 
 #' Create a model with required parameters
 #'
@@ -41,7 +117,7 @@ get_sample<-function(model) {
 #'                 Overrides parameters in formula.
 #' @export
 
-make_model<-function(vars,clusters,
+make_sample<-function(vars,clusters,
                       structure,
                       formula=NULL,
                       fixed=NULL,
@@ -83,107 +159,12 @@ make_model<-function(vars,clusters,
   }
   info$structure<-structure
 
-  clusters<-info$clusters
-  clusters[[length(clusters)+1]]<-list(name="within")
-  cluster<-clusters[[2]]
-  results<-unlist(lapply(clusters,function(cluster) {
-    vars<-rlist::list.find(info$vars, varying==cluster$name,n=Inf)
-    varsnames<-unlist(rlist::list.select(vars,name))
-    betas<-sum(as.numeric(info$fixed[varsnames])^2)
-    int<-as.numeric(info$random[[cluster$name]][1])
-    slopes<-unlist(lapply(info$random,function(x) x[varsnames]))
-    slopes<-sum(slopes[!is.na(slopes)])
-    if (length(int)==0) int<-1
-    noerr<-betas+int+slopes
-    values<-as.list(rep(noerr,length(varsnames)))
-    names(values)<-varsnames
-    values
-  }))
-  info$variances<-results
-  sample<-.make_sample(info)
-  model<-lme4::lmer(info$formula,data=sample)
-  simr::fixef(model)<-(info$fixed)
-  for (cluster in names(info$random)) {
-    info$random[[cluster]]<-diag(info$random[[cluster]])
-  }
-  simr::VarCorr(model)<-(info$random)
-  ### compute sigma ###
-  sigma<-1
-  ###
-  model<-simr::makeLmer(info$formula,info$fixed,info$random,sigma,sample)
-  return(model)
+  sample<-get_sample(info)
+
+  return(sample)
 
 }
 
-## make the sample
-
-.make_sample<-function(info) {
-
-  ## gather info for clusters
-
-  clusters<-info$clusters
-  nclusters<-lapply(clusters, function(x) 1:x$n)
-  clusternames<-unlist(rlist::list.select(clusters,name))
-
-  if (info$structure=="nested") {
-    clustervalues<-as.data.frame(.nestedclusters(nclusters))
-    names(clustervalues)<-clusternames
-  } else {
-    clustervalues<-expand.grid(nclusters)
-  }
-
-  colnames(clustervalues)<-clusternames
-  clustervalues$id<-1:dim(clustervalues)[1]
-  clusterdata<-clustervalues
-
-  ## gather info for variables
-  vars<-info$vars
-  dep<-rlist::list.find(vars, varying=="dependent",n=1)[[1]]
-  covs<-rlist::list.find(vars, type=="numeric",n=Inf)
-  factors<-rlist::list.find(vars, type=="factor",n=Inf)
-
-  ## create cluster-level data
-  for (cluster in clusters) {
-
-    values<-clustervalues[[cluster$name]]
-    n<-length(unique(values))
-    onedata<-.make_clusterdata(cluster$name,info,n)
-    onedata[[cluster$name]]<-unique(values)
-    print(apply(onedata,2,var))
-    clusterdata<-merge(clusterdata,onedata,by=cluster$name,all.x=T)
-  }
-
-  info$clusters<-list(list(name="within",n=dep$n,ysd=dep$ysd))
-  wdata<-list()
-  nk<-length(unique(clustervalues$id))
-  n<-dep$n
-  if (length(n)==1) n<-rep(n,nk)
-  ucluster<-unique(clustervalues$id)
-  ysd<-1
-  if (is.something(dep$ysd)) ysd<-dep$ysd
-  if (length(ysd)==1) ysd<-rep(ysd,nk)
-  for (i in seq_along(ucluster)) {
-    onedata<-.make_clusterdata("within",info,n[i],ysd[i])
-    onedata[["id"]]<-ucluster[i]
-    wdata[[i]]<-onedata
-  }
-  wdata<-do.call(rbind,wdata)
-  finaldata<-merge(clusterdata,wdata,by="id")
-  finaldata[[dep$name]]<-runif(dim(finaldata)[1])
-  for (cluster in clusternames) finaldata[[cluster]]<-factor(finaldata[[cluster]])
-  for (factor in factors)
-    if (factor$name %in% names(finaldata))
-      finaldata[[factor$name]]<-factor(finaldata[[factor$name]])
-
-  for (name in names(info$variances)) {
-#    finaldata[[name]]<-as.numeric(scale(finaldata[[name]]))*info$variances[name]
-     finaldata[[name]]<-as.numeric(scale(finaldata[[name]]))
-
-  }
-
-
-  finaldata
-}
 
 
 
@@ -466,7 +447,8 @@ levelstandardize<-function(data,var,cluster,level="within", overwrite=FALSE) {
      contrasts(data[[var$name]])<-cont
   }
   .formula<-as.formula(paste0("~",paste0(.names,collapse = "+")))
-   data<-as.data.frame(model.matrix(.formula,data))
+  data<-as.data.frame(model.matrix(.formula,data))
+  data<-as.data.frame(apply(data,2,function(x) as.numeric(scale(x)) ))
 #  data[[1]]<-NULL
 #  for (name in names(data)) data[[name]]<-scale(data[[name]])
   data[[1]]<-NULL
@@ -504,6 +486,7 @@ levelstandardize<-function(data,var,cluster,level="within", overwrite=FALSE) {
     mus<-rep(0,bn)
     X<-as.data.frame(MASS::mvrnorm(n,Sigma = sigmab,mu=mus,empirical = info$empirical))
     names(X)<-bnames
+    ### for K<3 mvrnorm does not guarantee standardization, so we force it ourselves
     finaldata<-apply(X,2,scale)
   }
   ## now we check for factors
@@ -518,6 +501,24 @@ levelstandardize<-function(data,var,cluster,level="within", overwrite=FALSE) {
   }
   finaldata<-as.data.frame(finaldata)
   vnames<-c(bnames,fnames)
+
+  test<-!all(vnames %in% names(info$fixed))
+  if (test) stop("Not all fixed effect have an effect size. Fixed effects that require attention are: ",paste(vnames,collapse = ", "))
+  if (n>4)
+       if (is.something(as.list(vnames))) {
+          y<-.yield_y(X,as.numeric(info$fixed[as.character(vnames)]))
+          finaldata[[.dep]]<-y*ysd
+       }
+  if (hasName(info$random,cluster$name)) {
+    int<-info$random[[cluster$name]][["(Intercept)"]]
+    if (is.something(int)) {
+      intvalues<-as.numeric(scale(rnorm(n)))*int
+      finaldata[[.dep]]<-finaldata[[.dep]]+intvalues
+    }
+  }
+
+print(cor(finaldata))
+
   finaldata
 }
 

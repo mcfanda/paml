@@ -35,6 +35,10 @@ vars<-list(list(name="y",n=5,varying="dependent"),
 
 form<-"y~[.10]*1+[.12]*w+[.2]*x+([1]*1+[1]*w|cluster)+([3]*1+[2]*x|cluster2)"
 
+sigmab<-matrix(c(1,0,0,1),ncol=2)
+n<-20
+aa<-MASS::mvrnorm(n,Sigma = sigmab,mu=c(0,0),empirical = T)
+apply(aa,2,scale)
 
 data<-get_sample(vars,clusters,structure="nested",formula = form)
 head(data)
