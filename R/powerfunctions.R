@@ -6,7 +6,6 @@ alpha=.05
                          effects=c("fixed","random")) {
          test<-paste0(".",test,"_",df)
          res<-do.call(eval(parse(text=test)),list(model))
-
          ncp<-res$coefs/res$se
          tside<-2
          crit<-qt(alpha/tside,res$df,lower.tail = F)
@@ -45,13 +44,16 @@ alpha=.05
                      parallel=TRUE) {
 
   time<-Sys.time()
-
+  message("Starting simulations ", nsim," repetitions","\n")
   if (is.null(seed))
       set.seed(seed)
 
 
   testfixed<-("fixed" %in% effects)
   testrandom<-("random" %in% effects)
+
+  if (nsim<2)
+      stop("Please set the number of simulation `nsim` larger than 1")
 
   one<-function(model) {
 
@@ -61,9 +63,11 @@ alpha=.05
 
       .exp<-function() {
       values<-list()
+      library(lmerTest)
       y       <-  do.call(simr::doSim, list(model))
       amodel  <-  do.call(simr::doFit, c(list(y, model)))
       amodel  <-  lmerTest::as_lmerModLmerTest(amodel)
+
       if (testfixed) {
           fixtest <-  summary(amodel)$coefficients
           values<-fixtest[,5]
@@ -100,7 +104,11 @@ alpha=.05
   }
 
   doFuture::registerDoFuture()
-  future::plan(future::multisession)
+  if (Sys.info()[["sysname"]]=="Linux")
+         future::plan(future::multicore)
+  else
+         future::plan(future::multisession)
+
   msg<-"Parallel computation started"
   if (nsim<11 || !parallel) {
      future::plan(future::sequential)

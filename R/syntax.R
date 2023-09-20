@@ -27,12 +27,12 @@ get_formula_info<-function(astring) {
     nfixed<-length(terms)
 
     check<-length(grep("\\*",fixed))>0
+    print(unlist(stringr::str_split(as.character(fixed),"\\+")))
     if (check) stop("Interaction should be explicitely defined with the ':' operator")
-    check<-length(grep("^1",unlist(stringr::str_split(fixed,"\\+"))))==0
+    check<-length(grep("^1",unlist(stringr::str_split(as.character(fixed),"\\+"))))==0
     if (check) stop("Please explicitly specify the fixed intercept value using `~[value]*1+..`")
-    check<-length(grep("^0",unlist(stringr::str_split(fixed,"\\+"))))>0
+    check<-length(grep("^0",unlist(stringr::str_split(as.character(fixed),"\\+"))))>0
     if (check) stop("Zero intercepts models are not allowed, but one can specify a data generating model with intercept equal to zero with the syntax `~[0]*1+..`")
-
     fixedcoefs<-as.numeric(coefs[1:(nfixed+1)])
     names(fixedcoefs)<-c("(Intercept)",terms)
 

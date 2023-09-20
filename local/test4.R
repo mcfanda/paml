@@ -305,4 +305,29 @@ zapsmall(betas(model2,verbose = T))
 w<-unlist(lapply(unique(asample$cluster2), function(x) cor(asample$x[asample$cluster2==x],asample$y[asample$cluster2==x]) ))
 mean(w,na.rm=T)
 
+library(lmerTest)
+library(simr)
+d<-simr::simdata
+fm <- lmer(y ~ x + (1|g), data=d)
+nrow(d)
+fmx1 <- extend(fm, along="x", n=20)
+table(d$g)
+table(fm@frame$g)
+table(fmx1@frame$g)
+nrow(fmx1@frame)
+nrow(getData(fmx1))
+fmx2 <- extend(fm, along="x", values=c(1,2,4,8,16))
+nrow(getData(fmx2))
+
+
+fm <- lmer(y ~ x + (1|g), data=simdata)
+table(getData(fm)$g)
+nrow(getData(fm))
+fmx1 <- extend(fm, along="g", n=4)
+nrow(getData(fmx1))
+table(getData(fmx1)$g)
+fmx2 <- extend(fm, along="x", values=c(1,2,4,8,16))
+nrow(getData(fmx2))
+
+dd<-getData(extend(fm, within="g", n=200))
 

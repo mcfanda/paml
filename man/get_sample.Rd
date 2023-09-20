@@ -4,7 +4,7 @@
 \alias{get_sample}
 \title{Create a dataset based on a data generating model}
 \usage{
-get_sample(info)
+get_sample(model)
 }
 \arguments{
 \item{vars}{a list defining variables characteristics}

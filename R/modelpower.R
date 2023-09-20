@@ -16,7 +16,7 @@
 #' @author Marcello Gallucci
 #' @export
 
-modelpower<- function(model,alpha,method="test",nsim=100,parallel=TRUE,seed=NULL,...) UseMethod("modelpower")
+modelpower<- function(model,...) UseMethod("modelpower")
 
 #' @export
 modelpower.default<-function(model,alpha=.05,nsim=100) {
@@ -81,4 +81,30 @@ modelpower.lmerMod<-function(model,
   results
 }
 
+modelpower.glmerMod<-function(model,
+                             alpha=.05,
+                             method="test",
+                             nsim=100,
+                             test="t",
+                             df="sat",
+                             effects=c("fixed"),
+                             seed=NULL,
+                             parallel=TRUE) {
+
+  if (method=="sim")
+    results<- .powerMixSims(model,
+                            nsim = nsim,
+                            alpha = alpha,
+                            effects=effects,
+                            seed = seed,
+                            parallel=parallel)
+  else
+    results<-.powerMixTest(model=model,
+                           test=test,
+                           df=df,
+                           alpha=alpha,
+                           effects=effects)
+
+  results
+}
 

@@ -1,6 +1,6 @@
 
 library(paml)
-
+library(lmerTest)
 k<-100
 nk<-21
 cysd<-1
@@ -14,13 +14,14 @@ vars<-list(list(name="y",n=nk,type="numeric",varying="dependent",ysd=ysd),
 )
 ### declare the poulation model with expected parameters ###
 
-form<-"y~[.10]*1+[.5]*c1+[.2]*c2+[.4]*x1+([1]*1|cluster1)"
+form<-"y~[.10]*1+[.5]*c1+[.2]*c2+[.4]*x1+([1]*1+[1]*x1|cluster1)"
 
 info<-get_formula_info(form)
 info
 ### generate the data ###
-sample<-make_sample(vars,clusters,"nested",formula=form,empirical = T)
-head(sample)
+library(paml)
+sample<-make_model(vars,clusters,"nested",formula=form,empirical = T)
+modelpower(sample,.05,method = "sim")
 mod<-lmer(y~c1+c2+(1|cluster1),data=sample)
 summary(mod)
 betas(mod,verbose=T)

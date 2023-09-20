@@ -1,30 +1,32 @@
 library(paml)
 library(lme4)
 
-k1<-50
-k2<-10
+k<-50
 #nk<-round(runif(k,10,20))
-nk<-50
+nk<-2
 cysd<-1
 #ysd<-round(runif(k,10,20))
 ysd<-1
-clusters<-list(list(name="cluster1",n=k,ysd=cysd),
-               list(name="cluster2",n=k,ysd=cysd))
+clusters<-list(list(name="cluster1",n=k,ysd=cysd))
 
 vars<-list(list(name="y",n=nk,type="numeric",varying="dependent",ysd=ysd),
            list(name="c1",type="numeric",varying="cluster1"),
            list(name="c2",type="numeric",varying="cluster1"),
-           list(name="x",type="numeric",varying="cluster2"),
+           list(name="x",type="numeric",varying="within"),
            list(name="x2",type="numeric",varying="within")
 
 
 )
 ### declare the poulation model with expected parameters ###
 
-form<-"y~[.10]*1+[.4]*c1+[.3]*c2+[.4]*x2+[.3]*x+([1]*1|cluster1)+([.75]*1+[.6]*x|cluster2)"
+form<-"y~[.10]*1+[.4]*c1+[.3]*c2+[.4]*x2+[.3]*x+([.75]*1+[.6]*x|cluster1)"
 
 
 info<-get_formula_info(form)
+
+model<-make_model(vars,clusters,"nested",formula=form,empirical = T)
+model
+
 
 left<-1-sum(info$fixed[c(2,3)]^2)
 
@@ -49,8 +51,6 @@ one<-function() {
 a<-model@frame
 
 
-model<-make_model(vars,clusters,"nested",formula=form,empirical = T)
-model
 VarCorr(model)$cluster1
 dd<-model@frame
 sd(dd$c1)
@@ -89,7 +89,7 @@ apply(do.call(rbind,reslist),2,mean)
 
 two<-function() {
 sample<-get_sample(model)
-mod0<-lmer(y~(1|cluster1)+(1|cluster2),data=sample)
+mod0<-lmer(y~(1|cluster1),data=sample)
 y0<-var(levelcenter(sample$y,sample$cluster1,"within"))
 y1<-var(levelcenter(sample$y,sample$cluster1,"between"))
 c(as.numeric(VarCorr(mod0)),sigma(mod0)^2,var(sample$y),y0,y1)

@@ -25,7 +25,10 @@ required_n<-function(model,
                      alpha=.05,
                      power=.80,
                      tol=.05,
+                     method="sim",
                      seed=NULL) {
+
+   time<-Sys.time()
 
    data<-model@frame
 
@@ -34,21 +37,29 @@ required_n<-function(model,
    if (direction=="within") {
         original_n<-round(mean(table(data[[expand]])))
         fun<-function(n) simr::extend(model,within=expand,n=n)
-    }
+        msg0<-"Original "
+        msg1<-paste(expand,"clusters mean size ")
+   }
    else {
         original_n<-length(table(data[[expand]]))
         fun<-function(n) simr::extend(model,along=expand,n=n)
+        msg0<-"Original "
+        msg1<-paste(expand,"number of clusters ")
    }
    .model<-model
    n<-original_n
    keep<-TRUE
    i<-1
+
+
+
+   cat("\nPower estimates...\n")
    while (keep) {
        .model<-fun(n)
-        cat("\nPower estimates\n")
-        estimate<-modelpower(.model,nsim=nsim,effects = effects,alpha=alpha,seed=seed)
+        message(msg0, " ",msg1," ",n)
+        msg0<-"Trying: "
+        estimate<-modelpower(.model,nsim=nsim,effects = effects,alpha=alpha,seed=seed,method=method)
         levels<-c(units=estimate$N,estimate$clusters)
-
         bpower<-as.data.frame(estimate)
         if (!is.null(target) && !(target %in% (rownames(bpower))) )
            stop("Target coefficient",target,"is not present in the model")
@@ -65,10 +76,11 @@ required_n<-function(model,
 
         tn<-which.min(.bpower$power)
        .target<-row.names(.bpower)[tn]
+        mp<-max(min(.bpower$power),.05)
+        message("Found power ",mp," with ",expand," at ",n,"\n")
 
-       mp<-max(min(.bpower$power),.05)
-       n<-ceiling(power*n/(mp))
 
+        n<-ceiling(power*n/(mp))
        if (.bpower$power>=power) {
          if ((.bpower$power-power)<tol)
                  keep=FALSE
@@ -82,6 +94,7 @@ required_n<-function(model,
         }
        }
        estimate$target<-.target
+       estimate$time<-as.numeric(Sys.time()-time)
        print(estimate,verbose=FALSE)
        cat("\n")
    }

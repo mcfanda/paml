@@ -85,21 +85,17 @@ make_model<-function(vars,clusters,
 
   clusters<-info$clusters
   clusters[[length(clusters)+1]]<-list(name="within")
-  cluster<-clusters[[2]]
-  results<-unlist(lapply(clusters,function(cluster) {
+  for (i in 1:length(clusters)) {
+    cluster<-clusters[[i]]
     vars<-rlist::list.find(info$vars, varying==cluster$name,n=Inf)
     varsnames<-unlist(rlist::list.select(vars,name))
     betas<-sum(as.numeric(info$fixed[varsnames])^2)
     int<-as.numeric(info$random[[cluster$name]][1])
     slopes<-unlist(lapply(info$random,function(x) x[varsnames]))
     slopes<-sum(slopes[!is.na(slopes)])
-    if (length(int)==0) int<-1
-    noerr<-betas+int+slopes
-    values<-as.list(rep(noerr,length(varsnames)))
-    names(values)<-varsnames
-    values
-  }))
-  info$variances<-results
+    clusters[[i]]$variances<-list(betas=betas,int=int,slopes=slopes)
+  }
+  print(clusters)
   sample<-.make_sample(info)
   model<-lme4::lmer(info$formula,data=sample)
   simr::fixef(model)<-(info$fixed)
@@ -149,7 +145,6 @@ make_model<-function(vars,clusters,
     n<-length(unique(values))
     onedata<-.make_clusterdata(cluster$name,info,n)
     onedata[[cluster$name]]<-unique(values)
-    print(apply(onedata,2,var))
     clusterdata<-merge(clusterdata,onedata,by=cluster$name,all.x=T)
   }
 

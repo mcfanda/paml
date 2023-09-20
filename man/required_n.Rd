@@ -14,6 +14,7 @@ required_n(
   alpha = 0.05,
   power = 0.8,
   tol = 0.05,
+  method = "sim",
   seed = NULL
 )
 }
