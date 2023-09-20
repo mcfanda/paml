@@ -1,0 +1,3 @@
+context("mixed")
+library(paml)
+
