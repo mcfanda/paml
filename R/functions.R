@@ -13,8 +13,11 @@ is.something <- function(x, ...) UseMethod(".is.something")
 is.there<-function(pattern,string) length(grep(pattern,string,fixed=T))>0
 
 
-`ladd<-`<-function(x,value) {
-  x[[length(x)+1]]<-value
+`ladd<-`<-function(x,value,key=NULL) {
+  if (is.something(key))
+    x[[key]]<-value
+  else
+    x[[length(x)+1]]<-value
   return(x)
 }
 

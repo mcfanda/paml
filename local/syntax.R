@@ -12,69 +12,75 @@ get_formula_info<-function(astring) {
     form0<-stringr::str_split_fixed(astring,"~",n=Inf)
     dep<-form0[[1]]
     rhs<-form0[[2]]
-    rawformula<-.make_raw(rhs)
-    rawterms<-stringr::str_split(rawformula,"\\+",n=Inf)[[1]]
-    rawcoefs<-stringr::str_remove_all(stringr::str_extract_all(rawformula,"\\[(.*?)\\]")[[1]],"[\\[\\]]")
-    test<-grep("\\(0$",rawterms)
-    if (length(test)>0)
-       rawterms<-rawterms[-test]
-    print(rawterms)
-    print(rawcoefs)
+    coefs<-stringr::str_remove_all(stringr::str_extract_all(rhs,"\\[(.*?)\\]")[[1]],"[\\[\\]]")
+    strformula<-stringr::str_remove_all(rhs,"\\[(.*?)\\]\\*")
+    pre<-gsub("\\(","",gsub("\\|(.*?)\\)","",strformula))
+    terms<-stringr::str_split(pre,"\\+",n=Inf)[[1]]
 
-    if (length(rawterms)!=length(rawcoefs)) stop("All terms must have a coefficient value")
+    formula<-as.formula(paste0(dep,"~",strformula))
+    fixed<-lme4::nobars(formula)
+    stringr::str_split(as.character(fixed[[3]]),"+")
+    nfixed<-length(fixed)
+    random<-lme4::findbars(formula)
+    rterms<-.flat(lapply(random,function(x) stringr::str_split_fixed(as.character(x[[2]]),"\\+",n = Inf)))
+    rterms<-rterms[sapply(rterms,function(x) x!="")]
+    terms<-stringr::str_split(strformula,"\\+")[[1]]
+#    pos<-str_split(rhs,"\\+")[[1]]
+    if (length(terms)!=length(coefs)) stop("All terms must have a coefficient value")
 
-    merformula<-stringr::str_remove_all(rhs,"\\[(.*?)\\]\\*")
-    rawformula<-stringr::str_remove_all(rawformula,"\\[(.*?)\\]\\*")
 
-    formula<-as.formula(paste0(dep,"~",rawformula))
+    check<-stringr::str_split(stringr::str_extract_all(rhs,"\\+\\(.+\\)")[[1]],"\\+")[[1]]
+    check<-check[check!=""]
+    if (!all(stringr::str_detect(check,"[\\(\\)]"))) stop("Fixed effects should be specified before the random effects")
+    test<-grep(",",coefs)
+    print(terms)
+    for (w in test) {
+      new<-stringr::str_split(coefs[[w]],",")
+      coefs[[w]]<-new
+      coefs<-.flat(coefs)
+      terms[[w]]<-list(paste0(unlist(terms[[w]]),".",1:length(unlist(new[[1]]))))
+      terms<-.flat(terms)
+    }
+    print(terms)
+    rawformula<-as.formula(paste0(dep,"~",paste(terms,collapse = " + ")))
+    formula<-as.formula(paste0(dep,"~",strformula))
     fixed<-lme4::nobars(formula)
     terms<-attr(terms(fixed),"term.labels")
-    nfixed<-length(fixed[[3]])
+    nfixed<-length(terms)
 
     check<-length(grep("\\*",fixed))>0
     if (check) stop("Interaction should be explicitely defined with the ':' operator")
     check<-length(grep("^1",unlist(stringr::str_split(as.character(fixed),"\\+"))))==0
     if (check) stop("Please explicitly specify the fixed intercept value using `~[value]*1+..`")
     check<-length(grep("^0",unlist(stringr::str_split(as.character(fixed),"\\+"))))>0
-    if (check) stop("Zero fixed intercept models are not allowed, but one can specify a data generating model with intercept equal to zero with the syntax `~[0]*1+..`")
-    fixedcoefs<-as.numeric(rawcoefs[1:(nfixed+1)])
+    if (check) stop("Zero intercepts models are not allowed, but one can specify a data generating model with intercept equal to zero with the syntax `~[0]*1+..`")
+    fixedcoefs<-as.numeric(coefs[1:(nfixed+1)])
     names(fixedcoefs)<-c("(Intercept)",terms)
-    randcoefs<-rawcoefs[(nfixed+2):length(rawcoefs)]
+
+    randcoefs<-coefs[(nfixed+2):length(coefs)]
     rands<-lme4::findbars(formula)
     randoms<-list()
-    clustersname<-list()
     k<-1
-    r<-rands[[2]]
-
     for (r in rands) {
-             cluster<-as.character(r[[3]])
+             cluster<-r[[3]]
              terms<-unlist(stringr::str_split(as.character(r[[2]]),"\\+"))
              terms<-terms[terms!=""]
              terms<-stringr::str_replace(terms,"^1","(Intercept)")
-             check<-grep("^0",unlist(stringr::str_split(as.character(terms),"\\+")))
-             if (length(check)>0) terms<-terms[-check]
-             print(terms)
-             print(check)
-             clustersname<-unique(c(clustersname,cluster))
-             .coefs<-as.numeric(randcoefs[k:(k+length(terms)-1)])
+            .coefs<-as.numeric(randcoefs[k:(k+length(terms)-1)])
              names(.coefs)<-terms
-             if (cluster %in% names(randoms)) {
-               test<-grep(cluster,names(randoms))
-               cluster<-paste(cluster,length(test)+1,sep = ".")
-             }
              randoms[[cluster]]<-.coefs
              k<-k+length(terms)
      }
 
     structure(list(
-              formula=  as.formula(paste0(dep,"~",merformula)),
-              rawformula=as.formula(paste0(dep,"~",rawformula)),
+              formula=formula,
+              rawformula=rawformula,
               fixed=fixedcoefs,
-              random=randoms,
-              clusters=clustersname,
+              random=rev(randoms),
               dep=dep
       ))
 }
+get_formula_info(astring)
 
 .make_raw<-function(rhs) {
 
@@ -85,14 +91,11 @@ get_formula_info<-function(astring) {
       n<-stringr::str_split(x,"\\*")[[1]][[2]]
       q<-as.numeric(stringr::str_split(gsub("\\[|\\]","",v),"\\,")[[1]])
       x<-paste(paste0("[",q,"]"),paste0(n,".",seq_along(q)),sep = "*",collapse = "+")
-    } else {
-      if (length(grep("\\)",x))>0) x<-paste0("|",x)
     }
-
     x
 
   })
-  gsub("+|","|",paste0(g,collapse = "+"), fixed = T)
+  paste0(g,collapse = "+")
 
 }
 

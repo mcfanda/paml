@@ -12,6 +12,10 @@ vars<-list(list(name="y",n=nk,type="numeric",varying="dependent",ysd=ysd),
            list(name="x1",type="numeric",varying="cluster1")
 
 )
+
+
+
+
 ### declare the poulation model with expected parameters ###
 
 form<-"y~[.10]*1+[.5]*c1+[.2]*c2+[.4]*x1+([1]*1+[1]*x1|cluster1)"
