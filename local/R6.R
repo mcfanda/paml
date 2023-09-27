@@ -20,85 +20,189 @@ Design <- R6Class("Design",
                         if (length(private$.clusters)==0) stop("Please specify at least one clustering variable with the option: `obj$clusters<-c(name='aname', layer='integer')`")
                         if (length(private$.vars)==0) stop("Please specify at least independent variable with the option: `obj$variables<-c(name='aname',type='atype', layer='integer')`")
 
-                        v1<-private$.vars[unlist(rlist::list.map(private$.vars,as.numeric(layer)==1))]
+                        v1<-rlist::list.find(private$.vars,layer=="1",n=Inf)
                         test<-(length(v1)==0)
                         if (test) stop("There is no variable varying at level 1. Mixed models are useless in this design.")
+                        v1f<-rlist::list.find(v1,type=="factor",n=Inf)
+                        l1 <-rlist::list.find(private$.clusters,name=="within",n=1)
+                        if (is.something(l1)) l1<-l1[[1]]
+                        if (!is.something(v1f) && !is.something(l1))
+                              stop("Within clusters size cannot be determined. Please explicitly declare it as `$clusters<-c(name='within', layer=1, size='integer').")
+                        if (!is.something(v1f) && !hasName(l1,"size"))
+                             stop("Within clusters size cannot be determined. Please explicitly declare it with argument `size='integer'`.")
 
-                        test1<-!is.something(v1[unlist(rlist::list.map(v1,type=="factor"))])
-                        test2<-!is.something(private$.clusters[unlist(rlist::list.map(private$.clusters,name=="within"))])
-                        if (test1 && test2) stop("Within clusters size cannot be determined. Please specify it with obj$size(within=xx)")
-
-                        if (is.null(private$.dep))
-                               warning("No dependent variable has been defined. The dependent variable distribution will be determined by the type of model being estimated.")
-
+                        if (is.something(l1)) {
+                              if (l1$layer!="1") stop("`within` layer should have `layer=1`")
+                        }
 
 
                     },
                     size=function(...) {
 
-                       alist<-list(...)
-                       sizes<-list()
-                       cnames<-private$.clustersname
-
-                       test<-setdiff(names(private$.clusters),names(alist))
-                       if (length(test)>0) stop("Cluster variable ",paste(test,collapse = ", ")," requires a size (# of groups)")
-
-                       if (hasName(alist,"within"))
-                         private$.clusters[["within"]]<-list(name="within",layer=1)
-
-                       self$check()
-                       lapply(names(alist),function(x) {
-                          if (!x %in% names(private$.clusters))
-                              stop("Cluster variable ",x," not defined.")
-                          private$.clusters[[x]]$size<-alist[[x]]
-                          })
-
-
-                       layers<-as.numeric(unlist(rlist::list.select(private$.clusters,layer)))
-                       layers<-unique(sort(c(layers,1)))
-                       data<-private$.make_layer(max(layers))
-                       for (j in rev(layers)[-1]) {
-                           rdata<-list()
-                           for (i in 1:nrow(data)) {
-                             suppressWarnings({
-                              ladd(rdata)<-cbind(data[i,],private$.make_layer(j,i))
-                             })
-                           }
-                           data<-do.call(rbind,rdata)
-                       }
-                       private$.data<-data
+                       private$.data<-private$.size(...)
 
                     },
-                    create=function(type) {
-                      if (missing(type))
-                          type<-private$.type
+                    create_model=function(family=NULL) {
 
-                      if (type=="lmer") {
+                       if (is.null(private$.data)) {
+                         cls<-unlist(rlist::list.select(private$.clusters,hasName(.,"size")))
+                         opt<-sapply(private$.clusters,function(x) {
+                           if (hasName(x,"size"))
+                             return(x$size)
+                           else
+                             10
+                         },simplify = F)
+                         do.call(self$size,opt)
+                       }
 
+                       data<-private$.data
+                        data[[private$.dep$name]]<-rnorm(nrow(data))
+#                       data[[private$.dep$name]]<-rbinom(nrow(data),1,.5)
+
+                       suppressMessages({
+                           suppressWarnings({
+                             model<-lme4::lmer(private$.info$formula,data=data)
+                             oldvc<-lme4::VarCorr(model)
+                       })})
                        info<-private$.info$random
-                       vc<-sapply(info,function(x) {
-                           m<-matrix(0,ncol=length(x),nrow=length(x))
-                           colnames(m)<-names(x)
-                           rownames(m)<-names(x)
-                           diag(m)<-x
+                       vc<-sapply(names(oldvc),function(x) {
+                           o<-oldvc[[x]]
+                           m<-matrix(0,ncol=ncol(o),nrow=nrow(o))
+                           colnames(m)<-colnames(o)
+                           rownames(m)<-rownames(o)
+                           diag(m)<-info[[x]]
                            m
-                         })
-                      sim_model <-  simr::makeLmer(
-                        private$.info$formula,
-                        fixef = private$.info$fixed,
-                        VarCorr = vc,
-                        sigma = 1,
-                        data = private$.data
-                      )
-                      simdata$dep<-simr::doSim(sim_model)
+                         },simplify = F)
 
+                       .data<-private$.data
+                       suppressMessages(suppressWarnings({
+                       if (is.null(family)) {
+                            private$.root_model <-  simr::makeLmer(
+                            private$.info$formula,
+                            fixef = private$.info$fixed,
+                            VarCorr = vc,
+                            sigma = self$sigma,
+                            data = .data
+                            )
+                       } else {
+                         private$.root_model <-  simr::makeGlmer(
+                           private$.info$formula,
+                           family=family,
+                           fixef = private$.info$fixed,
+                           VarCorr = vc,
+                           data = .data
+                         )
+                       }
+                       }))
+                       message("Model created")
 
-                     }
+                      invisible(private$.root_model)
+
+                     },
+                    one_sample=function(...) {
+                      opt<-list(...)
+                      if (is.null(private$.root_model))
+                         stop("Please create a model before drawing a sample.")
+                      if (hasName(opt,"data")) {
+                          .data<-opt$data
+                          opt$data<-NULL
+                      } else
+                          .data<-private$.data
+
+                      if (is.something(opt)) {
+                        do.call(self$size,opt)
+                      }
+                      results<-stats::simulate(private$.root_model,newdata=.data,allow.new.levels = TRUE)
+                      .data[[private$.dep$name]]<-results[["sim_1"]]
+                      return(.data)
+                    },
+                    simulate=function(...) {
+                      opt<-list(...)
+                      if (!hasName(opt,"Nsim"))
+                        stop("Please specify th number of simulations with the option `Nsim='integer'.")
+                      Nsim<-opt$Nsim
+                      opt$Nsim<-NULL
+                      for (cl in private$.clusters) {
+                          if (!cl$name %in% names(opt)) {
+                            opt[[cl$name]]<-cl$size
+                            message("Number of levels for cluster variable ",cl$name," is set to the default ",cl$size)
+                          }
+                      }
+                      if (all(names(opt) %in% names(private$.cluster)))
+                           stop("Argument(s)", paste(setdiff(names(opt),names(private$.cluster)),collapse = ", ")," not allowed here.")
+
+                      doFuture::registerDoFuture()
+                      .options<-self$options()
+                      if (.options$parallel=="multicore")
+                        future::plan(future::multicore)
+                      else
+                        future::plan(future::multisession)
+
+                      msg<-"Parallel computation started"
+                      if (Nsim<11 | .options$parallel==FALSE) {
+                        future::plan(future::sequential)
+                        msg<-"Sequential computation started"
+                      }
+                      message(msg)
+
+                      progressr::handlers(global = TRUE)
+                      progressr::handlers("progress")
+
+                      model<-private$.root_model
+                      sets<-expand.grid(opt)
+
+                      two<-function(model,p) {
+                        y<-simr::doSim(model)
+                        suppressMessages(suppressWarnings({
+                        mod<-simr::doFit(y,model)
+                        }))
+                        ss<-summary(mod)
+                        res<-c()
+                        for (i in seq_len(nrow(ss$coefficients))) {
+                          tab<-ss$coefficients[i,]
+                          opt<-self$options()
+                          tab[["power"]]<-as.numeric(tab[[length(tab)]]<opt$alpha)
+                          res<-c(res,tab)
+                        }
+                        rnames<-rownames(ss$coefficients)
+                        cnames<-c(colnames(ss$coefficients),"power")
+                        .names<-paste(rep(rnames,each=length(cnames)),cnames,sep="_")
+                        names(res)<-.names
+                        res[["conv"]]<-as.numeric(is.null(mod@optinfo$conv$lme4$messages))
+                        p()
+                        return(res)
+                      }
+                      one<-function(i) {
+                        params<-subset(sets,1:nrow(sets)==i)
+                        params<-lapply(params,function(x) as.numeric(as.character(x)))
+                        data<-do.call(private$.size,as.list(params))
+                        model@frame<-data
+#                        res<- lapply(1:Nsim, function(j) two(model))
+                        message("Simulating  ",Nsim," times for ", paste(names(params),params,sep="=",collapse = ", "))
+                        p <- progressr::progressor(along = 1:Nsim)
+                        res  <- foreach::foreach(1:Nsim) %dorng% two(model,p)
+
+                        res<-do.call(rbind,res)
+                        res<-apply(res,2,mean)
+                        res<-c(Nsim=Nsim,params,res)
+                        res
+                      }
+                      time<-Sys.time()
+                      results<-lapply(1:nrow(sets), function(i) one(i))
+                      results<-do.call(rbind,results)
+                      message("Elapsed time: ",Sys.time()-time," secs")
+                      results
+
+                    },
+
+                    options=function(...) {
+                      a<-list(...)
+                      if (length(a)>0) {
+                        private$.options[[names(a)]]<-a[[1]]
+                      } else
+                         private$.options
 
                     }
-
-
-
                   ),
                   active= list(
                     N=function(val) {
@@ -156,11 +260,11 @@ Design <- R6Class("Design",
                       }
                     },
                     info=function() {
-                      print(private$.info)
+                      private$.info
                     },
                     formula=function(formula) {
                       if (missing(formula))
-                          return(private.formula)
+                          return(private$.formula)
                       else {
                         private$.formula<-formula
                         private$.info<-get_formula_info(formula)
@@ -169,10 +273,13 @@ Design <- R6Class("Design",
                     },
                     data=function() {
                           return(private$.data)
-                        }
-
-
-
+                      },
+                    sigma=function(s) {
+                      if (missing(s))
+                        return(private$.sigma)
+                      else
+                        private$.sigma<-s
+                    }
 
                   ), ## end of active
                   private = list(
@@ -185,7 +292,12 @@ Design <- R6Class("Design",
                     .info=NULL,
                     .formula=NULL,
                     .data=NULL,
-                    .dep=NULL,
+                    .dep=list(name="y"),
+                    .sigma=1,
+                    .root_model=NULL,
+                    .options=list(messages=TRUE,
+                                  parallel="multisession",
+                                  alpha=.05),
                     .checkformula=function() {
 
                       .var_checks<-function(x) {
@@ -194,33 +306,38 @@ Design <- R6Class("Design",
                           return()
                         if (x %in% vars)
                           return()
-                        test<-gsub("\\.[0-9]*$","",x)
+                        root<-gsub("\\.[0-9]*$","",x)
+                        var<-private$.vars[[root]]
 
-                        var<-private$.vars[[unique(test)]]
-
-                        if (! unique(test) %in% vars)
+                        if (! root %in% vars)
                           stop("Variable ",x," is not in the design.")
-                        if (unique(test) %in% covs)
+                        if (root %in% covs)
                           stop("`var.digit` names are reserved for categorical contrasts but variable ",test," is numeric")
 
-                        if (length(test)!=(as.numeric(var$levels)-1))
-                          stop("Variable ",var$name," is defined with ",var$levels," levels but ",length(test)," contrasts variables coefficients are provided")
 
+                        test<-grep(paste0("^",root,"\\.[0-9]*$"),names(private$.info$fixed))
+                        if (length(test)!=(as.numeric(var$levels)-1))
+                          stop("Variable ",
+                               var$name,
+                               " is defined with ",
+                               var$levels,
+                               " levels but ",
+                               length(test),
+                               " contrast variables coefficients are provided. ",
+                               "Variable ",var$name," requires ",length(test)-1,
+                               " contrast coefficient(s).")
                       }
 
                       self$check()
                       facs<-names(rlist::list.find(private$.vars,type == "factor", n=Inf))
                       covs<-names(rlist::list.find(private$.vars,type == "numeric", n=Inf))
                       vars<-c(facs,covs)
-
                       garb<-lapply(names(private$.info$fixed), .var_checks)
-
                       garb<-lapply(private$.info$clusters,function(x){
                         if (x %in% names(private$.clustersname))
                           return()
                         stop("Cluster Variable ",x," is not in the design")
                       })
-                      print(private$.info)
 
                       lapply(private$.info$random, function(x) {
                         lapply(names(x), .var_checks)
@@ -238,7 +355,7 @@ Design <- R6Class("Design",
                         cdata<-NULL
                         Nc<-0
                       } else {
-                            clusters<-private$.clusters[unlist(rlist::list.map(private$.clusters,layer==l))]
+                            clusters<-rlist::list.find(private$.clusters,layer==as.character(l))
                             clist<-lapply(clusters, function(x) {
                                  if (!is.null(match))
                                    paste(match,1:x$size,sep="_")
@@ -277,10 +394,6 @@ Design <- R6Class("Design",
                           .names<-c(names(cdata),varsnames)
                           cdata<-as.data.frame(cbind(cdata,wdata[1:Nc,]))
                           names(cdata)<-.names
-                          lapply(varsnames,function(x) {
-                            cdata[[x]]<-factor(cdata[[x]])
-                            contrasts(cdata[[x]])<-contr.sum(as.numeric(vars[[x]]$levels))
-                          })
                       }
                       varsnames<-unlist(rlist::list.select(wcon,name))
                       if (length(varsnames)>0) {
@@ -298,24 +411,95 @@ Design <- R6Class("Design",
                         cdata[[paste0("layer._.",layer)]]<-paste(match,1:nrow(cdata),sep="_")
 
                       return(cdata)
+                    },
+                    .make_contrast=function(nlevels) {
+
+                      dummy <- stats::contr.treatment(nlevels)
+                      coding <- matrix(rep(1/nlevels, prod(dim(dummy))), ncol=nlevels-1)
+                      contrast <- (dummy - coding)
+                      colnames(contrast)<-paste0(".",1:(nlevels-1))
+                      contrast
+                    },
+                    .size=function(...) {
+                      alist<-list(...)
+                      sizes<-list()
+                      cnames<-private$.clustersname
+
+                      test<-setdiff(names(private$.clusters),names(alist))
+                      if (length(test)>0) {
+                        cls<-private$.clusters[test]
+                        for (x in cls) {
+                          if (hasName(x,"size"))
+                            alist[[x$name]]<-x$size
+                        }
+                      }
+                      test<-setdiff(names(private$.clusters),names(alist))
+                      if (length(test)>0)
+                        stop("Cluster variable ",paste(test,collapse = ", ")," requires a size (# of groups)")
+
+                      if (hasName(alist,"within") & !hasName(private$.clusters,"within"))
+                        private$.clusters[["within"]]<-list(name="within",layer=1,size=as.numeric(alist$within))
+
+                      self$check()
+                      lapply(names(alist),function(x) {
+                        if (!x %in% names(private$.clusters))
+                          stop("Cluster variable ",x," not defined.")
+                        private$.clusters[[x]]$size<-alist[[x]]
+                      })
+                      layers<-as.numeric(unlist(rlist::list.select(private$.clusters,layer)))
+                      layers<-unique(sort(c(layers,1)))
+                      data<-private$.make_layer(max(layers))
+                      for (j in rev(layers)[-1]) {
+                        rdata<-list()
+                        for (i in 1:nrow(data)) {
+                          suppressWarnings({
+                            ladd(rdata)<-cbind(data[i,],private$.make_layer(j,i))
+                          })
+                        }
+                        data<-do.call(rbind,rdata)
+                      }
+                      facs<-rlist::list.find(private$.vars,type == "factor", n=Inf)
+                      for (v in facs) {
+                        data[[v$name]]<-factor(data[[v$name]])
+                        contrasts(data[[v$name]])<-private$.make_contrast(as.numeric(v$levels))
+                      }
+                      clusters<-names(private$.clusters)
+                      if ("within" %in% clusters)  clusters<-clusters[which(clusters!="within")]
+                      for (v in clusters) data[[v]]<-factor(data[[v]])
+                      return(data)
                     }
                   ) # end of private
 )
 
 d<-Design$new()
 d$clusters<-c(name="endo_id", layer=2)
-d$clusters<-c(name="video_id", layer=2)
+#d$clusters<-c(name="video_id", layer=2)
+d$clusters<-c(name="within", layer=1, size=50)
+
 #d$variables<-c(name="afac1",type="factor",layer=1,levels=2)
-d$variables<-c(name="afac2",type="factor",layer=1,levels=2)
-d$variables<-c(name="x1",type="numeric",layer=1,mean=100)
-d$variables<-c(name="x3",type="numeric",layer=3,mean=100)
-d$variables<-c(name="y",type="numeric", dependent=T)
-data<-d$size(endo_id=16,video_id=10)
-data
-form<-"y~[1]*1+[2,3]*afac2+[4]*x1+(0+[5]*x1|endo_id)+([6]*1|endo_id)+([7]*1|video_id)"
+d$variables<-c(name="afac2",type="factor",layer=1,levels=3)
+d$variables<-c(name="x1",type="numeric",layer=1)
+#d$variables<-c(name="x3",type="numeric",layer=3,mean=100)
+#d$variables<-c(name="y",type="numeric", dependent=T)
+#data<-d$size(endo_id=10,video_id=10, within=20)
+form<-"y~[1]*1+[2,3]*afac2+[4]*x1+(0+[5]*x1|endo_id)+([6]*1|endo_id)+([7]*1+[8]*x1|video_id)"
+#form<-"y~[1]*1+[4]*x1+(0+[5]*x1|endo_id)+([6]*1|endo_id)+([7]*1+[8]*x1|video_id)"
+#form<-"y~[1]*1+[0,0]*afac2+[0]*x1+([.2]*1+[.2]*x1|endo_id)"
+#form<-"y~[1]*1+[.2]*x1+([.3]*1+[.3]*x1|endo_id)"
 d$formula<-form
-nrow(data)
-length(table(data$endo_id))
-length(table(data$video_id))
+q<-d$create_model(family=binomial())
+#as<-d$one_sample(endo_id=0)
+#simulate(q,newdata=as,allow.new.levels=T)
 
-
+info<-d$info
+d$options(parallel="multisession")
+#d$simulate(Nsim=100,endo_id=c(50,100))
+info$fixed<-1:length(info$fixed)
+unlist(info$fixed,info$random)
+info$fixed
+info$random
+params<-c(info$fixed,unlist(lapply(info$random,function(x) lapply(x,function(z) return(z)))))
+.names<-paste0("p.",names(params))
+params<-1:length(params)
+names(params)<-.names
+params

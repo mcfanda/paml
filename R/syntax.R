@@ -5,7 +5,6 @@
 #
 #' @export
 
-astring<-"y~[.10]*1+[.5,.5]*afac2+([1]*1+[1,.5,.3]*x1+[2]*x2|acluster)+([1]*1|bcluster)"
 
 get_formula_info<-function(astring) {
 
@@ -18,10 +17,8 @@ get_formula_info<-function(astring) {
     test<-grep("\\(0$",rawterms)
     if (length(test)>0)
        rawterms<-rawterms[-test]
-    print(rawterms)
-    print(rawcoefs)
 
-    if (length(rawterms)!=length(rawcoefs)) stop("All terms must have a coefficient value")
+    if (length(rawterms)!=length(rawcoefs)) stop("All terms must have a coefficient value. Only 0 random intercepts are defined without a value.")
 
     merformula<-stringr::str_remove_all(rhs,"\\[(.*?)\\]\\*")
     rawformula<-stringr::str_remove_all(rawformula,"\\[(.*?)\\]\\*")
@@ -29,22 +26,20 @@ get_formula_info<-function(astring) {
     formula<-as.formula(paste0(dep,"~",rawformula))
     fixed<-lme4::nobars(formula)
     terms<-attr(terms(fixed),"term.labels")
-    nfixed<-length(fixed[[3]])
-
+    nfixed<-stringr::str_count(as.character(fixed)[[3]],"\\+")+1
     check<-length(grep("\\*",fixed))>0
     if (check) stop("Interaction should be explicitely defined with the ':' operator")
     check<-length(grep("^1",unlist(stringr::str_split(as.character(fixed),"\\+"))))==0
     if (check) stop("Please explicitly specify the fixed intercept value using `~[value]*1+..`")
     check<-length(grep("^0",unlist(stringr::str_split(as.character(fixed),"\\+"))))>0
     if (check) stop("Zero fixed intercept models are not allowed, but one can specify a data generating model with intercept equal to zero with the syntax `~[0]*1+..`")
-    fixedcoefs<-as.numeric(rawcoefs[1:(nfixed+1)])
+    fixedcoefs<-as.numeric(rawcoefs[1:(nfixed)])
     names(fixedcoefs)<-c("(Intercept)",terms)
-    randcoefs<-rawcoefs[(nfixed+2):length(rawcoefs)]
+    randcoefs<-rawcoefs[(nfixed+1):length(rawcoefs)]
     rands<-lme4::findbars(formula)
     randoms<-list()
     clustersname<-list()
     k<-1
-    r<-rands[[2]]
 
     for (r in rands) {
              cluster<-as.character(r[[3]])
@@ -53,14 +48,12 @@ get_formula_info<-function(astring) {
              terms<-stringr::str_replace(terms,"^1","(Intercept)")
              check<-grep("^0",unlist(stringr::str_split(as.character(terms),"\\+")))
              if (length(check)>0) terms<-terms[-check]
-             print(terms)
-             print(check)
              clustersname<-unique(c(clustersname,cluster))
              .coefs<-as.numeric(randcoefs[k:(k+length(terms)-1)])
              names(.coefs)<-terms
              if (cluster %in% names(randoms)) {
                test<-grep(cluster,names(randoms))
-               cluster<-paste(cluster,length(test)+1,sep = ".")
+               cluster<-paste(cluster,length(test),sep = ".")
              }
              randoms[[cluster]]<-.coefs
              k<-k+length(terms)
