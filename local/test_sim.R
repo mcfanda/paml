@@ -14,8 +14,10 @@ vars<-list(list(name="y",n=nk,type="numeric",varying="dependent",ysd=ysd),
 )
 
 
-
-
+library(lme4)
+library(GAMLj3)
+names(clustermanymodels)
+glmer(ycont~x+(1|cluster),data=clustermanymodels, family=Gamma())
 ### declare the poulation model with expected parameters ###
 
 form<-"y~[.10]*1+[.5]*c1+[.2]*c2+[.4]*x1+([1]*1+[1]*x1|cluster1)"

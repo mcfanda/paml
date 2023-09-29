@@ -1,3 +1,8 @@
+source("R/functions.R")
+source("R/constants.R")
+source("R/methods.R")
+source("R/syntax.R")
+
 library(R6)
 Design <- R6Class("Design",
                   public = list(
@@ -35,13 +40,14 @@ Design <- R6Class("Design",
                               if (l1$layer!="1") stop("`within` layer should have `layer=1`")
                         }
 
-
                     },
                     size=function(...) {
 
                        private$.data<-private$.size(...)
 
                     },
+
+
                     create_model=function(family=NULL) {
 
                        if (is.null(private$.data)) {
@@ -54,7 +60,6 @@ Design <- R6Class("Design",
                          },simplify = F)
                          do.call(self$size,opt)
                        }
-
                        data<-private$.data
                         data[[private$.dep$name]]<-rnorm(nrow(data))
 #                       data[[private$.dep$name]]<-rbinom(nrow(data),1,.5)
@@ -99,6 +104,12 @@ Design <- R6Class("Design",
                       invisible(private$.root_model)
 
                      },
+                   update_model=function(data=NULL,fixed=NULL,varcorr=NULL,sigma=NULL,...) {
+
+                       private$.root_model<-private$.update_model(data=data,fixed=fixed,varcorr=varcorr,sigma=sigma,...)
+
+                     },
+
                     one_sample=function(...) {
                       opt<-list(...)
                       if (is.null(private$.root_model))
@@ -109,27 +120,48 @@ Design <- R6Class("Design",
                       } else
                           .data<-private$.data
 
+                      .model<-private$.root_model
+
                       if (is.something(opt)) {
-                        do.call(self$size,opt)
+                        .data<-do.call(private$.size,opt)
+                        .model<-private$.update_model(data=.data)
                       }
-                      results<-stats::simulate(private$.root_model,newdata=.data,allow.new.levels = TRUE)
-                      .data[[private$.dep$name]]<-results[["sim_1"]]
+                      y<-simr::doSim(.model)
+                      .data[[private$.dep$name]]<-y
                       return(.data)
                     },
                     simulate=function(...) {
+
                       opt<-list(...)
                       if (!hasName(opt,"Nsim"))
-                        stop("Please specify th number of simulations with the option `Nsim='integer'.")
+                        stop("Please specify the number of simulations with the option `Nsim='integer'.")
                       Nsim<-opt$Nsim
                       opt$Nsim<-NULL
-                      for (cl in private$.clusters) {
-                          if (!cl$name %in% names(opt)) {
-                            opt[[cl$name]]<-cl$size
+
+                      clusters<-opt[names(opt) %in% private$.clustersname]
+                      params<- opt[! names(opt) %in% private$.clustersname]
+
+                      lapply(private$.clusternames, function(x) {
+                          if (! x %in% names(clusters)) {
+                            opt[[x]]<-cl$size
                             message("Number of levels for cluster variable ",cl$name," is set to the default ",cl$size)
                           }
-                      }
-                      if (all(names(opt) %in% names(private$.cluster)))
-                           stop("Argument(s)", paste(setdiff(names(opt),names(private$.cluster)),collapse = ", ")," not allowed here.")
+                      })
+                      test<-names(params)[!names(params) %in% SIMPARAMS]
+                      if (length(test)>0)
+                           stop("Argument(s)", paste(test,collapse = ", ")," not allowed here.")
+
+                      ### prepare experimental factors
+                      alist<-list(clusters=clusters)
+                      if (hasName(opt,"fixed")) alist[["fixed"]]<-opt[["fixed"]]
+                      if (hasName(opt,"random")) alist[["random"]]<-opt[["random"]]
+                      args<-do.call(expand.list,alist)
+                      message("Total number of simulations: ",attr(args,"nitems"), " (combinations) X ", Nsim," (Nsim) = ",(Nsim*attr(args,"nitems")))
+
+                      model<-private$.root_model
+
+                      ####
+
 
                       doFuture::registerDoFuture()
                       .options<-self$options()
@@ -143,15 +175,13 @@ Design <- R6Class("Design",
                         future::plan(future::sequential)
                         msg<-"Sequential computation started"
                       }
-                      message(msg)
 
                       progressr::handlers(global = TRUE)
                       progressr::handlers("progress")
 
-                      model<-private$.root_model
-                      sets<-expand.grid(opt)
 
                       two<-function(model,p) {
+
                         y<-simr::doSim(model)
                         suppressMessages(suppressWarnings({
                         mod<-simr::doFit(y,model)
@@ -173,22 +203,24 @@ Design <- R6Class("Design",
                         return(res)
                       }
                       one<-function(i) {
-                        params<-subset(sets,1:nrow(sets)==i)
-                        params<-lapply(params,function(x) as.numeric(as.character(x)))
-                        data<-do.call(private$.size,as.list(params))
-                        model@frame<-data
-#                        res<- lapply(1:Nsim, function(j) two(model))
-                        message("Simulating  ",Nsim," times for ", paste(names(params),params,sep="=",collapse = ", "))
-                        p <- progressr::progressor(along = 1:Nsim)
-                        res  <- foreach::foreach(1:Nsim) %dorng% two(model,p)
+                        params<-lists.atIndex(i,args)
+                        clusters<-params[["clusters"]]
+                        params[["clusters"]]<-NULL
+                        message("Simulating  ",Nsim," times for ",paste(names(clusters),clusters,sep=" = ", collapse = ", "), paste(names(params),params,sep="=",collapse = ", "))
 
+                        data<-do.call(private$.size,as.list(clusters))
+                        params[["data"]]<-data
+                        .model<-do.call(private$.update_model,params)
+                        #                        res<- lapply(1:Nsim, function(j) two(model))
+                        p <- progressr::progressor(along = 1:Nsim)
+                        res  <- foreach::foreach(1:Nsim) %dorng% two(.model,p)
                         res<-do.call(rbind,res)
                         res<-apply(res,2,mean)
                         res<-c(Nsim=Nsim,params,res)
                         res
                       }
                       time<-Sys.time()
-                      results<-lapply(1:nrow(sets), function(i) one(i))
+                      results<-lapply(1:attr(args,"nitems"), function(i) one(i))
                       results<-do.call(rbind,results)
                       message("Elapsed time: ",Sys.time()-time," secs")
                       results
@@ -242,6 +274,8 @@ Design <- R6Class("Design",
 
                         if (obj$type=="factor" & (!"levels" %in% names(obj)))
                             stop("Factors should have `levels=K` defined, where K is the number of levels")
+                        if ((obj$type=="factor") & num(obj$levels)<2)
+                          stop("Factor ",obj$name," should have at leat 2 levels")
 
                         if (obj$type=="numeric" & (!"mean" %in% names(obj))) {
                           obj$mean<-0
@@ -302,10 +336,22 @@ Design <- R6Class("Design",
 
                       .var_checks<-function(x) {
 
+                        x<-gsub(" ","",x)
+
                         if (x=="(Intercept)")
                           return()
-                        if (x %in% vars)
+
+                        if (x %in% vars) {
+                          if (x %in% facs) {
+                            f<-rlist::list.find(private$.vars,type == "factor", n=1)[[1]]
+                            ncontr<-as.numeric(as.character(f$levels))-1
+                            if (ncontr==1)
+                               names(private$.info$fixed)[names(private$.info$fixed)==x] <-paste0(x,".1")
+                            else
+                              stop("Variable ",x," has ",ncontr+1," levels and requires ",ncontr," contrast variables. Please define its coefficients as ",paste0("`[",paste(1:ncontr,collapse = ","),"]*",x,"`"))
+                          }
                           return()
+                        }
                         root<-gsub("\\.[0-9]*$","",x)
                         var<-private$.vars[[root]]
 
@@ -349,13 +395,12 @@ Design <- R6Class("Design",
                       wfac<-list()
                       wcon<-list()
                       l<-as.character(layer)
-                      clusters<-private$.clusters[unlist(rlist::list.map(private$.clusters,layer==l))]
-
+                      clusters<-private$.clusters[unlist(rlist::list.map(private$.clusters,layer==as.character(l)))]
                       if (length(clusters)==0) {
                         cdata<-NULL
                         Nc<-0
                       } else {
-                            clusters<-rlist::list.find(private$.clusters,layer==as.character(l))
+                            clusters<-rlist::list.find(private$.clusters,layer==as.character(l),n = Inf)
                             clist<-lapply(clusters, function(x) {
                                  if (!is.null(match))
                                    paste(match,1:x$size,sep="_")
@@ -467,39 +512,99 @@ Design <- R6Class("Design",
                       if ("within" %in% clusters)  clusters<-clusters[which(clusters!="within")]
                       for (v in clusters) data[[v]]<-factor(data[[v]])
                       return(data)
+                    },
+                    .update_model=function(data=NULL,fixed=NULL,random=NULL,sigma=NULL,...) {
+
+                      if (is.null(private$.root_model))
+                        stop("No model to update")
+
+                      if (is.null(data)) .data<-private$.data else .data<-data
+
+                      .fixed<-private$.info$fixed
+                      if (!is.null(fixed)) {
+                        .fixed[names(fixed)]<-fixed
+                      }
+                      .random<-private$.info$random
+                      if (!is.null(random)) {
+                        for (param in names(random)) {
+                          for (acluster in names(.random ) ) {
+                                  cl<-grep(paste0("^",acluster,"\\."),param)
+                                  clean<-gsub(paste0("^",acluster,"."),"",param)
+                                  if (length(cl)>0) {
+                                     .random[[acluster]][[clean]]<-random[param]
+                                  }
+                        }
+                        }
+                      }
+                      .sigma<-private$.sigma
+
+                      oldvc<-lme4::VarCorr(private$.root_model)
+                      vc<-sapply(names(oldvc),function(x) {
+                        o<-oldvc[[x]]
+                        m<-matrix(0,ncol=ncol(o),nrow=nrow(o))
+                        colnames(m)<-colnames(o)
+                        rownames(m)<-rownames(o)
+                        diag(m)<-.random[[x]]
+                        m
+                      },simplify = F)
+                      .family<-family(private$.root_model)
+
+
+                      suppressMessages(suppressWarnings({
+                        if (.family$family=="gaussian") {
+                          model <-  simr::makeLmer(
+                            private$.info$formula,
+                            fixef = .fixed,
+                            VarCorr = vc,
+                            sigma = .sigma,
+                            data = .data
+                          )
+                        } else {
+                          model <-  simr::makeGlmer(
+                            private$.info$formula,
+                            family=.family,
+                            fixef = .fixed,
+                            VarCorr = vc,
+                            data = .data
+                          )
+                        }
+                      }))
+
+                      model
+
                     }
+
                   ) # end of private
 )
 
 d<-Design$new()
 d$clusters<-c(name="endo_id", layer=2)
-#d$clusters<-c(name="video_id", layer=2)
-d$clusters<-c(name="within", layer=1, size=50)
+d$clusters<-c(name="video_id", layer=2)
+#d$clusters<-c(name="within", layer=1, size=50)
 
 #d$variables<-c(name="afac1",type="factor",layer=1,levels=2)
-d$variables<-c(name="afac2",type="factor",layer=1,levels=3)
-d$variables<-c(name="x1",type="numeric",layer=1)
+d$variables<-c(name="afac2",type="factor",layer=1,levels=2)
+#d$variables<-c(name="x1",type="numeric",layer=1)
 #d$variables<-c(name="x3",type="numeric",layer=3,mean=100)
 #d$variables<-c(name="y",type="numeric", dependent=T)
 #data<-d$size(endo_id=10,video_id=10, within=20)
-form<-"y~[1]*1+[2,3]*afac2+[4]*x1+(0+[5]*x1|endo_id)+([6]*1|endo_id)+([7]*1+[8]*x1|video_id)"
-#form<-"y~[1]*1+[4]*x1+(0+[5]*x1|endo_id)+([6]*1|endo_id)+([7]*1+[8]*x1|video_id)"
+#form<-"y~[1]*1+[2,3]*afac2+[4]*x1+(0+[5]*x1|endo_id)+([6]*1|endo_id)+([7]*1+[8]*x1|video_id)"
+
+form<-"y~1+ [.25]*afac2+(1+afac2|endo_id)+([.3]*1+[.25]*afac2|video_id)"
 #form<-"y~[1]*1+[0,0]*afac2+[0]*x1+([.2]*1+[.2]*x1|endo_id)"
-#form<-"y~[1]*1+[.2]*x1+([.3]*1+[.3]*x1|endo_id)"
+#form<-"y~[1]*1+[.3]*x1+([.3]*1+[.3]*x1|endo_id)"
 d$formula<-form
+d$info
 q<-d$create_model(family=binomial())
-#as<-d$one_sample(endo_id=0)
 #simulate(q,newdata=as,allow.new.levels=T)
 
-info<-d$info
 d$options(parallel="multisession")
-#d$simulate(Nsim=100,endo_id=c(50,100))
-info$fixed<-1:length(info$fixed)
-unlist(info$fixed,info$random)
-info$fixed
-info$random
-params<-c(info$fixed,unlist(lapply(info$random,function(x) lapply(x,function(z) return(z)))))
-.names<-paste0("p.",names(params))
-params<-1:length(params)
-names(params)<-.names
-params
+
+p1<-.7
+p2<-p1+.05
+odd<-(p2/(1-p2))/(p1/(1-p1))
+cat("Odd: ",odd," slope variance:",log(odd),"\n")
+
+#ss<-d$simulate(Nsim=5,endo_id=c(20,25),video_id=10,fixed=list("(Intercept)"=.3,afac2.1=c(.4,.5)),random=list(afac2.1=2))
+#ss<-d$simulate(Nsim=50,endo_id=20,video_id=405)
+#ss
