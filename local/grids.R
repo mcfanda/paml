@@ -21,13 +21,12 @@ expand.list<-function(...) {
  },simplify = F)
  results
 }
-random<-NULL
 q<-expand.list(clusters=clusters,fixed=fixed,random=random)
 q
 lists.atIndex<-function(i,alist) {
-  lapply(alist,funtion(x) sapply(x,function(z) z[i]))
+  lapply(alist, function(x) sapply(x,function(z) z[i]))
 }
-lists.atIndex()
+lists.atIndex(3,q)
 eg<-expand.grid(c(clusters,fixed,random))
 q1<-as.list(eg[,names(fixed)])
 q2<-as.list(eg[,names(clusters)])

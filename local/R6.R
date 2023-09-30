@@ -272,10 +272,10 @@ Design <- R6Class("Design",
                         if ((!"layer" %in% names(obj)) & (!"dependent" %in% names(obj)))
                            warning("No layer specified for variable ",obj$name," use `layer=X` to specify a variable varying within layer X+1 or `dependent=TRUE` for the dependent variable")
 
-                        if (obj$type=="factor" & (!"levels" %in% names(obj)))
+                        if (obj$type=="factor" && (!"levels" %in% names(obj)))
                             stop("Factors should have `levels=K` defined, where K is the number of levels")
-                        if ((obj$type=="factor") & num(obj$levels)<2)
-                          stop("Factor ",obj$name," should have at leat 2 levels")
+                        if ((obj$type=="factor") && num(obj$levels)<2)
+                           stop("Factor ",obj$name," should have at leat 2 levels")
 
                         if (obj$type=="numeric" & (!"mean" %in% names(obj))) {
                           obj$mean<-0
@@ -583,27 +583,27 @@ d$clusters<-c(name="video_id", layer=2)
 #d$clusters<-c(name="within", layer=1, size=50)
 
 #d$variables<-c(name="afac1",type="factor",layer=1,levels=2)
-d$variables<-c(name="afac2",type="factor",layer=1,levels=2)
-#d$variables<-c(name="x1",type="numeric",layer=1)
+d$variables<-c(name="afac2",type="factor",layer=1,levels=3)
+d$variables<-c(name="x1",type="numeric",layer=1)
 #d$variables<-c(name="x3",type="numeric",layer=3,mean=100)
 #d$variables<-c(name="y",type="numeric", dependent=T)
 #data<-d$size(endo_id=10,video_id=10, within=20)
-#form<-"y~[1]*1+[2,3]*afac2+[4]*x1+(0+[5]*x1|endo_id)+([6]*1|endo_id)+([7]*1+[8]*x1|video_id)"
+form<-"y~[1]*1+[2,3]*afac2+[4]*x1+(0+[5]*x1|endo_id)+([6]*1|endo_id)+([7]*1+[8]*x1|video_id)"
 
-form<-"y~1+ [.25]*afac2+(1+afac2|endo_id)+([.3]*1+[.25]*afac2|video_id)"
+#form<-"y~1+ [.25]*afac2+(1+afac2|endo_id)+([.3]*1+[.25]*afac2|video_id)"
 #form<-"y~[1]*1+[0,0]*afac2+[0]*x1+([.2]*1+[.2]*x1|endo_id)"
 #form<-"y~[1]*1+[.3]*x1+([.3]*1+[.3]*x1|endo_id)"
 d$formula<-form
 d$info
-q<-d$create_model(family=binomial())
+#q<-d$create_model(family=binomial())
 #simulate(q,newdata=as,allow.new.levels=T)
 
-d$options(parallel="multisession")
+#d$options(parallel="multisession")
 
-p1<-.7
-p2<-p1+.05
-odd<-(p2/(1-p2))/(p1/(1-p1))
-cat("Odd: ",odd," slope variance:",log(odd),"\n")
+#p1<-.7
+#p2<-p1+.05
+#odd<-(p2/(1-p2))/(p1/(1-p1))
+#@cat("Odd: ",odd," slope variance:",log(odd),"\n")
 
 #ss<-d$simulate(Nsim=5,endo_id=c(20,25),video_id=10,fixed=list("(Intercept)"=.3,afac2.1=c(.4,.5)),random=list(afac2.1=2))
 #ss<-d$simulate(Nsim=50,endo_id=20,video_id=405)
