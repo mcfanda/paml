@@ -7,12 +7,22 @@
 
 get_formula_info<-function(astring) {
 
-   if (inherits(astring,"formula"))
-      astring<-paste(deparse(form, width.cutoff = 500), collapse="")
+   if (inherits(astring,"sim_model")) {
+      astring<-paste(deparse(astring, width.cutoff = 500), collapse="")
+   }
+  astring<-stringr::str_remove_all(astring,"\\s")
+  form0<-stringr::str_split_fixed(astring,"~",n=Inf)
+  rhs<-form0[[2]]
+  dep<-form0[[1]]
 
-   form0<-stringr::str_split_fixed(astring,"~",n=Inf)
-   rhs<-form0[[2]]
-   dep<-form0[[1]]
+  ## determine the effect size type and move on
+  x<-stringr::str_replace_all(rhs," ","")
+  if (grep("\\.b",x)) estype="b"
+  x<-stringr::str_replace_all(x,"\\.b\\(","\\[")
+  x<-stringr::str_replace_all(x,"\\.v\\(","\\[")
+  rhs<-stringr::str_replace_all(x,"\\)\\*","\\]\\*")
+  ###
+
    clean<-.make_raw(rhs)
    fixed<-stringr::str_split(stringr::str_remove_all(clean,"\\((.*?)\\)"),"\\+")[[1]]
    fixed<-fixed[unlist(sapply(fixed,function(x) x!=""))]
@@ -23,6 +33,7 @@ get_formula_info<-function(astring) {
      names(coef)<-terms
      coef
    },USE.NAMES = FALSE)
+   print(clean)
 
    ### first we deal with the random component
    .random<-stringr::str_extract_all(clean,"\\((.*?)\\)")[[1]]
@@ -62,7 +73,8 @@ get_formula_info<-function(astring) {
               fixed=fixed,
               random=random,
               clusters=clusters,
-              dep=dep
+              dep=dep,
+              estype=estype
       ))
 }
 

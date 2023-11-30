@@ -36,26 +36,29 @@ astring<-"y~[1]*1+[2,2.5]*afac2+x1+(0+[4,4.5]*afac2|endo_id)+([5]*1|endo_id)+([6
 
       form0<-stringr::str_split_fixed(astring,"~",n=Inf)
       rhs<-form0[[2]]
+      dep<-form0[[1]]
       clean<-.make_raw(rhs)
       fixed<-stringr::str_split(stringr::str_remove_all(clean,"\\((.*?)\\)"),"\\+")[[1]]
       fixed<-fixed[unlist(sapply(fixed,function(x) x!=""))]
-      lapply(fixed, function(x) {
+      fixed<-sapply(fixed, function(x) {
         coef<-as.numeric(stringr::str_remove_all(stringr::str_extract_all(x,"\\[(.*?)\\]"),"[\\[\\]]"))
         terms<-gsub("\\*","",stringr::str_remove_all(x,"\\[(.*?)\\]"))
-        print(terms)
-        print(coef)
-      })
+        terms<-stringr::str_replace_all(terms,"^1","(Intercept)")
+        names(coef)<-terms
+        coef
+      },USE.NAMES = FALSE)
 
       ### first we deal with the random component
-      random<-stringr::str_extract_all(clean,"\\((.*?)\\)")[[1]]
+      .random<-stringr::str_extract_all(clean,"\\((.*?)\\)")[[1]]
       clusters<-list()
-      params<-lapply(as.list(random), function(x) {
+      random<-lapply(as.list(.random), function(x) {
               str<-stringr::str_split(x,"\\|",n=Inf)[[1]]
               cl<-gsub("\\)","",str[[length(str)]])
               clname<-cl
               if (cl %in% clusters)
                     clname<-paste(cl,sum(as.numeric(clusters==cl)),sep=".")
-              clusters[[length(clusters)+1]]<<-clname
+              else
+                    clusters[[length(clusters)+1]]<<-clname
               str<-stringr::str_split(x,"\\+",n=Inf)[[1]]
               suppressWarnings(
                     coefs<-sapply(str, function(z) as.numeric(stringr::str_remove_all(stringr::str_extract_all(z,"\\[(.*?)\\]"),"[\\[\\]]")))
@@ -69,4 +72,7 @@ astring<-"y~[1]*1+[2,2.5]*afac2+x1+(0+[4,4.5]*afac2|endo_id)+([5]*1|endo_id)+([6
               names(coefs)<-paste(clname,terms,sep=".")
               coefs
       })
-params
+      formula<-stringr::str_remove_all(rhs,"\\[(.*?)\\]")
+      formula<-stringr::str_remove_all(formula,"\\*")
+      formula<-as.formula(paste(dep,formula,sep="~"))
+      formula

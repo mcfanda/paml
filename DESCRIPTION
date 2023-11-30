@@ -7,7 +7,7 @@ Maintainer: marcello gallucci <mcfanda@gmail.com>
 Description: Provides an unified interface for power analysis
              of several linear models, such as the generalized linear model, 
              mixed models, and generalized mixed models.
-Imports: doRNG, doFuture, progressr
+Imports: R6,doRNG, doFuture, progressr
 License: GPL
 Encoding: UTF-8
 LazyData: true

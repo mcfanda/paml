@@ -1,0 +1,8 @@
+detach("package:paml", unload = TRUE)
+library(paml)
+d<-Design$new()
+d$clusters<-c(name="endo_id", layer=2)
+d$clusters<-c(name="video_id", layer=2)
+d$variables<-c(name="afac2",type="factor",layer=1,levels=3)
+d$variables<-c(name="x1",type="numeric",layer=1)
+d$simulate(Nsim=10,endo_id=10)

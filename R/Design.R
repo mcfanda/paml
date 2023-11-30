@@ -1,26 +1,158 @@
-source("R/functions.R")
-source("R/constants.R")
-source("R/methods.R")
-source("R/syntax.R")
+#' @title  Design R6 Class
+#' @description
+#' The R6 object that defines the sample, the design matrix and runs the simulations for power calculations
+#'
+#' @export
 
-library(R6)
-Design <- R6Class("Design",
+
+
+Design <- R6::R6Class("Design",
                   public = list(
-                    vars = NULL,
+                    sigma = 1,
+                    #' @description
+                    #' Initialize the Design object. No arguments are required.
+                    #' @md
                     initialize = function() {
                     },
+                    #' @description
+                    #' Print some information regarding the design being set up
                     print=function() {
                       cat("\nCluster variables\n")
-                      cat(paste(private$.clusters),"\n\n")
-                      cat("Variables\n")
-                      garb<-lapply(private$.vars,function(x) {
+                      garb<-lapply(private$.clusters,function(x) {
+                        x$fanthom_layer<-stringr::str_trunc(x$fanthom_layer,10)
                         print(unlist(x))
                         cat("\n")
-
                       } )
 
+                      cat("Variables\n")
+                      garb<-lapply(private$.variables,function(x) {
+                        print(unlist(x))
+                        cat("\n")
+                      } )
+
+                      cat("Dependent Variable\n")
+                      if (is.something(private$.dep)) {
+                        dep<-private$.dep
+                        xprint<-c("name"=dep$name,"family"=dep$family$family,levels=dep$levels,mean=dep$mean,sd=dep$sd)
+                        print(xprint)
+                      }
+                      cat("Formula\n")
+                      p<-private$.model
+                      class(p)<-NULL
+                      print(p)
+                      cat("Model\n")
+                      p<-private$.root_model
+                      print(p)
+
+                      cat("parameters\n")
+                      p<-private$.params
+                      class(p)<-NULL
+                      print(p)
+
+                      if (!is.null(private$.info)) {
+                        print(private$.info)
+                      } else
+                        message("No formula has been defined")
                     },
+                    get_sample=function(N) {
+                      self$make_data(N)
+                      y<-simulate(private$.root_model,nsim = 1)[[1]]
+                      .data<-private$.data
+                      .data[[private$.dep$name]]<-y
+                      .data
+                    },
+                    make_data=function(N) {
+
+                      vars<-private$.variables
+                      .data<-NULL
+
+                      ### first fix the factors
+                      facs<-rlist::list.filter(vars,type=="factor")
+                      facsname<-unlist(sapply(facs,function(v) v$name))
+                      if (length(facs)>0) {
+                      layers<-unique(unlist(rlist::list.select(facs,layer)))
+                      if (any(layers>-99)) {
+                        m<-max(layers)
+                        facs<-lapply(facs,function(f) {
+                          if (as.numeric(f$layer)==-99)
+                              f$layer<-m
+                          f
+                        })
+                      }
+                      layers<-unique(unlist(rlist::list.select(facs,layer)))
+                      clayers<-unique(unlist(rlist::list.select(facs,fanthom_layer)))
+                        for (j in clayers) {
+                          ..data<-NULL
+                          .facs<-rlist::list.filter(facs,fanthom_layer==j)
+                          varslayers<-as.numeric(unlist(rlist::list.select(.facs,layer)))
+                          varslevels<-as.numeric(unlist(rlist::list.select(.facs,levels)))
+                          wdata<-as.data.frame(expand.grid(lapply(varslevels,function(x) 1:x)))
+                          names(wdata)<-unlist(rlist::list.select(.facs,name))
+                          nested<-unique(unlist(sapply(.facs, function(f) f$nested)))
+                          if (is.null(nested))
+                              ..data<-wdata
+                          else {
+                             ..data<-merge(.data,wdata)
+                              for (v in names(wdata)) {
+                                 ..data[[v]]<-paste0(..data[[v]],"_",row.names(..data))
+                              }
+                          }
+                          ladd(.data)<-..data
+                        }
+
+                       if (length(.data)==1) {
+                           .data<-as.data.frame(.data[[1]])
+                       } else {
+                        m<-max(unlist(sapply(.data,function(d) dim(d)[1])))
+                        newdata<-lapply(.data,function(d) {
+                          if (dim(d)[1]==m)
+                             return(d)
+                          d<-d[rep(rownames(d),m)[1:m],]
+                          return(d)
+                        })
+                        .data<-as.data.frame(do.call(cbind,newdata))
+                        row.names(.data)<-1:dim(.data)[1]
+                       }
+                       .data<-as.data.frame(.data[rep(rownames(.data),N)[1:N],])
+                       if (dim(.data)[2]==1)
+                       names(.data)<-facs[[1]]$name
+                      }
+
+                       ### fix the continuous
+                       covs<-rlist::list.filter(vars,type!="factor")
+                       k<-length(covs)
+                       if (k>0) {
+                         s<-matrix(0,ncol = k,nrow = k)
+                         diag(s)<-1
+                         m<-rep(0,k)
+                         cdata<-as.data.frame(MASS::mvrnorm(N,m,s,empirical = F))
+                         covsname<-unlist(sapply(covs,function(v) v$name))
+                         names(cdata)<-covsname
+                         if (is.null(.data))
+                           .data<-cdata
+                         else
+                           .data<-as.data.frame(cbind(.data,cdata))
+                         ### fixe scale variables
+                         for (cov in covs) {
+                           .data[[cov$name]]<-(as.numeric(scale(.data[[cov$name]]))+num(cov$mean))*num(cov$sd)
+                           if (cov$type=="integer")
+                                 .data[[cov$name]]<-round(.data[[cov$name]]*10)
+                         }
+                       }
+                       ## fix the types
+                       for (f in facsname) {
+                           .data[[f]]<-factor(.data[[f]])
+                           contrasts(.data[[f]])<-contr.treatment(nlevels(.data[[f]]))-(1/nlevels(.data[[f]]))
+                       }
+                      # we need to set private$.data for .create_dep to find it
+                       private$.data<-.data
+                       private$.create_model()
+
+                    },
+                    #' @description
+                    #' Checks some crucial parameters of the `Design` object being defined.
                     check=function() {
+                        return()
 
                         if (length(private$.clusters)==0) stop("Please specify at least one clustering variable with the option: `obj$clusters<-c(name='aname', layer='integer')`")
                         if (length(private$.vars)==0) stop("Please specify at least independent variable with the option: `obj$variables<-c(name='aname',type='atype', layer='integer')`")
@@ -40,14 +172,20 @@ Design <- R6Class("Design",
                               if (l1$layer!="1") stop("`within` layer should have `layer=1`")
                         }
 
+
                     },
+                    #' @description
+                    #' Define new sample size parameters. It accepts clusters name as arguments in the form
+                    #' `obj$size(cluster1='integer', cluster2='integer', ...)`. Not necessary to use when `obj$simulate()` is used.
                     size=function(...) {
-
                        private$.data<-private$.size(...)
-
                     },
-
-
+                    #' @description
+                    #' Create a root model as a basis of the power simulations.
+                    #' @param family a \code{\link[stats]{stats::family}}  that defines the type of model to be estimated. Any family accepted by
+                    #' \code{\link[lme4]{lme4::glmer}} is accepted. If not defined (default) a linear model is assumed. If random coefficients
+                    #' are defined (such as `(x|cluster)` in the formula), a mixed model is assumed, eastimated with \code{\link[lme4]{lme4::lmer}}. If no random effects are defined, a general(ized) linear
+                    #' model is estimated with \code{\link[stats]{lme}}
                     create_model=function(family=NULL) {
 
                       if (is.null(private$.info))
@@ -58,15 +196,16 @@ Design <- R6Class("Design",
                          opt<-sapply(private$.clusters,function(x) {
                            if (hasName(x,"size"))
                              return(x$size)
-                           else
+                           else {
+                             message("Number of clusters for variable ",x$name, " was not defined. It is set to 10 as provisional size.")
                              10
+                           }
                          },simplify = F)
                          do.call(self$size,opt)
                        }
                        data<-private$.data
                         data[[private$.dep$name]]<-rnorm(nrow(data))
 #                       data[[private$.dep$name]]<-rbinom(nrow(data),1,.5)
-
                        suppressMessages({
                            suppressWarnings({
                              model<-lme4::lmer(private$.info$formula,data=data)
@@ -107,9 +246,16 @@ Design <- R6Class("Design",
                       invisible(private$.root_model)
 
                      },
-                   update_model=function(data=NULL,fixed=NULL,varcorr=NULL,sigma=NULL,...) {
+                      #' @description
+                      #' Update a previously defined model with new coefficients or new sample sizes.
+                      #' @param data a new dataframe to use to estimate the model
+                      #' @param fixed a new set of fixed coefficient defined as `fixed=list(varname1=number,varname2=number)`
+                      #' @param random a new set of random coefficient defined as `random=list(acluster=list(varname1=number,varname2=number))`
 
-                       private$.root_model<-private$.update_model(data=data,fixed=fixed,varcorr=varcorr,sigma=sigma,...)
+
+                   update_model=function(data=NULL,fixed=NULL,random=NULL,sigma=NULL,...) {
+
+                       private$.root_model<-private$.update_model(data=data,fixed=fixed,random=random,sigma=sigma,...)
 
                      },
 
@@ -133,6 +279,18 @@ Design <- R6Class("Design",
                       .data[[private$.dep$name]]<-y
                       return(.data)
                     },
+                      #' @description
+                      #' Define a simulation experiment. It accepts several arguments, depending to the type of experiment the user wishes to use
+                      #' @param Nsim the number of simulations (repetitions) for each cell of the simulation experimental design.
+                      #' @param fixed a named list of of expected parameters of the form `(fixed=list('(Intercept)'='number',aname='number',...)`.
+                      #' Parameters not defined here are set accordingly to the formula passed with `obj$formula<-astring` method.
+                      #' @param random a named list of of expected parameters of the form `(random=list(acluster=list('(Intercept)'='number',aname='number',...))`.
+                      #' Parameters not defined here are set accordingly to the formula passed with `obj$formula<-astring` method.
+                      #' @param ... any cluster variable defined with `obj$clusters` with a required size, passed as `obj$simulate(aclustername='integer'` where
+                      #' `integer` is the number of clusters required. Clusters not sized here are set accordingly to the size passed by the user with
+                      #' `obj$cluster(...,size='integer'`) or to the default provisional size=10
+                      #'
+
                     simulate=function(...) {
 
                       opt<-list(...)
@@ -152,7 +310,7 @@ Design <- R6Class("Design",
                       })
                       test<-names(params)[!names(params) %in% SIMPARAMS]
                       if (length(test)>0)
-                           stop("Argument(s)", paste(test,collapse = ", ")," not allowed here.")
+                           stop("Argument(s) ", paste(test,collapse = ", ")," not allowed here.")
 
                       ### prepare experimental factors
                       alist<-list(clusters=clusters)
@@ -244,93 +402,54 @@ Design <- R6Class("Design",
                         private$.N
                       else
                         private$.N<-val
-
                     },
-                    clusters = function(cluster) {
-                      if (missing(cluster))
-                           private$.clusters
-                      else {
 
-                          if (!("name" %in% names(cluster)))
-                              stop("Please define a cluster as named vector containing the `name=` option")
-                        if (!("layer" %in% names(cluster)))
-                          stop("Please define a cluster layer (1,2,etc.) usining the `layer=` option")
-
-                          if (!inherits(cluster,"list")) cluster<-as.list(cluster)
-
-                          private$.clusters[[cluster[["name"]]]]<-cluster
-                          private$.clustersname[[cluster[["name"]]]]<-cluster[["name"]]
-
-                      }
-                    },
-                    variables = function(obj) {
-                      if (missing(obj))
-                        private$.vars
-                      else {
-                        if (!is.list(obj)) obj<-as.list(obj)
-                        if ( (!"name" %in% names(obj)) | (!"type" %in% names(obj)))
-                           stop("Please specify a variable as c(name='varname',type='vartype',layer='integer') where 'vartype' can be `numeric`  or `factor`, and varying is a cluster variable across which the variable levels varies. Use `layer=X` for variables varying within level X+1")
-
-                        if ((!"layer" %in% names(obj)) & (!"dependent" %in% names(obj)))
-                           warning("No layer specified for variable ",obj$name," use `layer=X` to specify a variable varying within layer X+1 or `dependent=TRUE` for the dependent variable")
-
-                        if (obj$type=="factor" && (!"levels" %in% names(obj)))
-                            stop("Factors should have `levels=K` defined, where K is the number of levels")
-                        if ((obj$type=="factor") && num(obj$levels)<2)
-                           stop("Factor ",obj$name," should have at leat 2 levels")
-
-                        if (obj$type=="numeric" & (!"mean" %in% names(obj))) {
-                          obj$mean<-0
-                          message("Variable ",obj$name," mean has been set to 0. Use `mean=xxx` to set a different value")
-                        }
-                        if (obj$type=="numeric" & (!"sd" %in% names(obj))) {
-                          obj$sd<-1
-                          message("Variable ",obj$name," sd has been set to 1. Use `sd=xxx` to set a different value")
-                        }
-                        if (("dependent" %in% names(obj)) && (obj["dependent"]==TRUE)) {
-                          private$.dep<-obj
-                          return()
-                        }
-
-                        ladd(private$.vars, key=obj$name)<-obj
-                      }
+                    add_object=function(obj) {
+                      if (inherits(obj,"sim_variable"))
+                         private$.variables[[obj$name]]<-obj
+                      if (inherits(obj,"sim_cluster"))
+                        private$.clusters[[obj$name]]<-obj
+                      if (inherits(obj,"sim_dependent"))
+                        private$.dep<-obj
+                      if (inherits(obj,"sim_params"))
+                        private$.params<-obj
+                      if (inherits(obj,"sim_model"))
+                        private$.info<-get_formula_info(obj)
                     },
                     info=function() {
                       private$.info
                     },
-                    formula=function(formula) {
-                      if (missing(formula))
-                          return(private$.formula)
-                      else {
-                        private$.formula<-formula
-                        private$.info<-get_formula_info(formula)
-                        private$.checkformula()
-                      }
-                    },
-                    data=function() {
+                    data=function(data) {
+                      if (missing(data))
                           return(private$.data)
                       },
-                    sigma=function(s) {
-                      if (missing(s))
-                        return(private$.sigma)
+                    root_model=function(obj) {
+
+                      if (missing(obj))
+                        return(private$.root_model)
                       else
-                        private$.sigma<-s
+                        private$.root_model<-obj
                     }
+
 
                   ), ## end of active
                   private = list(
                     .type="lmer",
                     .N=NULL,
+                    .params=list(),
+                    .model=list(),
                     .clusters=list(),
+                    .variables=list(),
                     .clustersname=list(),
                     .vars=list(),
                     .names=NULL,
                     .info=NULL,
                     .formula=NULL,
                     .data=NULL,
-                    .dep=list(name="y"),
+                    .dep=NULL,
                     .sigma=1,
                     .root_model=NULL,
+                    .external_data=FALSE,
                     .options=list(messages=TRUE,
                                   parallel="multisession",
                                   alpha=.05),
@@ -397,7 +516,8 @@ Design <- R6Class("Design",
                       wfac<-list()
                       wcon<-list()
                       l<-as.character(layer)
-                      clusters<-private$.clusters[unlist(rlist::list.map(private$.clusters,layer==as.character(l)))]
+                      cat("layer ", l ,"\n")
+                      clusters<-private$.clusters[unlist(rlist::list.map(private$.clusters,layer==l))]
                       if (length(clusters)==0) {
                         cdata<-NULL
                         Nc<-0
@@ -412,6 +532,7 @@ Design <- R6Class("Design",
                             cdata<-as.data.frame(expand.grid(clist))
                             Nc<-nrow(cdata)
                       }
+
                       vars<-private$.vars[unlist(rlist::list.map(private$.vars,layer==l))]
                       for (x in vars) {
                           if (x$type=="factor")
@@ -495,6 +616,11 @@ Design <- R6Class("Design",
                       })
                       layers<-as.numeric(unlist(rlist::list.select(private$.clusters,layer)))
                       layers<-unique(sort(c(layers,1)))
+                      ### here we create data for each layer. It may seem a bit slow
+                      ### but as compared with running simulations this procedure
+                      ### time does not really impact the computational time of the
+                      ### powe analysis. A data.frame is create once for all simulation repetitions
+                      ### within one sample size
                       data<-private$.make_layer(max(layers))
                       for (j in rev(layers)[-1]) {
                         rdata<-list()
@@ -505,6 +631,8 @@ Design <- R6Class("Design",
                         }
                         data<-do.call(rbind,rdata)
                       }
+                      ### data are ready, now simply check variables types
+
                       facs<-rlist::list.find(private$.vars,type == "factor", n=Inf)
                       for (v in facs) {
                         data[[v$name]]<-factor(data[[v$name]])
@@ -515,7 +643,7 @@ Design <- R6Class("Design",
                       for (v in clusters) data[[v]]<-factor(data[[v]])
                       return(data)
                     },
-                    .update_model=function(data=NULL,fixed=NULL,random=NULL,sigma=NULL,...) {
+                   .update_model=function(data=NULL,fixed=NULL,random=NULL,sigma=NULL,...) {
 
                       if (is.null(private$.root_model))
                         stop("No model to update. Please Specify a model with the command `obj$create_model(...)` ")
@@ -538,7 +666,9 @@ Design <- R6Class("Design",
                         }
                         }
                       }
-                      .sigma<-private$.sigma
+                      .sigma<-sigma
+                      if (is.null(sigma))
+                         .sigma<-private$.sigma
 
                       oldvc<-lme4::VarCorr(private$.root_model)
                       vc<-sapply(names(oldvc),function(x) {
@@ -574,40 +704,16 @@ Design <- R6Class("Design",
 
                       model
 
-                    }
+                    },
+                   .create_model=function() {
+                     if (!is.something(private$.dep)) {
+                       return()
+                     }
+                     dep<-private$.dep
+                     class(dep)<-c(private$.dep$family$family,class(dep))
+                     generate(dep,self)
+                   }
+
 
                   ) # end of private
 )
-
-d<-Design$new()
-d$clusters<-c(name="endo_id", layer=2)
-d$clusters<-c(name="video_id", layer=2)
-#d$clusters<-c(name="within", layer=1, size=50)
-
-#d$variables<-c(name="afac1",type="factor",layer=1,levels=2)
-d$variables<-c(name="afac2",type="factor",layer=1,levels=3)
-d$variables<-c(name="x1",type="numeric",layer=1)
-#d$variables<-c(name="x3",type="numeric",layer=3,mean=100)
-#d$variables<-c(name="y",type="numeric", dependent=T)
-#data<-d$size(endo_id=10,video_id=10, within=20)
-form<-"y~[1]*1+[2,3]*afac2+[4]*x1+(0+[5]*x1|endo_id)+([6]*1|endo_id)+([7]*1+[8]*x1|video_id)"
-
-#form<-"y~1+ [.25]*afac2+(1+afac2|endo_id)+([.3]*1+[.25]*afac2|video_id)"
-#form<-"y~[1]*1+[0,0]*afac2+[0]*x1+([.2]*1+[.2]*x1|endo_id)"
-form<-y~1+x1+(1+x1|endo_id)
-d$create_model(family = binomial())
-d$formula<-form
-
-d$info
-
-d$options(parallel="multisession")
-
-#p1<-.7
-#p2<-p1+.05
-#odd<-(p2/(1-p2))/(p1/(1-p1))
-#@cat("Odd: ",odd," slope variance:",log(odd),"\n")
-
-#ss<-d$simulate(Nsim=5,endo_id=c(20,25),video_id=10,fixed=list("(Intercept)"=.3,afac2.1=c(.4,.5)),random=list(afac2.1=2))
-ss<-d$simulate(Nsim=5,endo_id=20,video_id=20)
-ss
-#ss

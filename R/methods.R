@@ -71,3 +71,42 @@ as.data.frame.pamlpowermix<-function(obj) {
 }
 
 
+
+generate<- function(obj,...) UseMethod(".generate")
+
+generate.default<-function(dep,...) stop("No way to generate a dependent variable for class ",class(obj))
+
+.generate.gaussian<-function(dep, obj) {
+
+  m<-as.numeric(dep$mean)
+  s<-as.numeric(dep$sd)
+  .data<-obj$data
+  N<-dim(.data)[1]
+
+  if (is.something(obj$info)) {
+    rhs<-formula(paste("~",deparse(obj$info$formula[[3]])))
+    MM<-model.matrix(rhs,.data)
+    y<-MM %*% obj$info$fixed
+    y<-y
+  } else {
+    y<-stats::rnorm(N)
+  }
+  .data[[dep$name]]<-y
+  obj$root_model<-lm(obj$info$formula,.data)
+  obj$data<-.data
+
+}
+
+.generate.binomial<-function(dep,...) {
+  x<-stats::rbinom(obj$N,size = 1,prob = .5)
+  return(x)
+}
+
+.generate.poisson<-function(dep,...) {
+  if (is.something(obj$mean))
+      lambda<-obj$mean
+  else
+      lambda<-2
+  x<-stats::rpois(obj$N,lambda)
+  return(x)
+}
